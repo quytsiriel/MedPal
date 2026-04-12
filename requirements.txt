@@ -5,3 +5,5 @@ firebase-admin
 google-adk
 apscheduler
 python-multipart
+python-dotenv
+

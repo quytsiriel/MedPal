@@ -1,6 +1,16 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+
+# Tự động nạp biến môi trường từ file .env vào os.environ
+load_dotenv()
+
+from services.firebase import init_firebase
+from agents.agent1 import router as agent1_router
+
+# Initialize firebase before app starts
+init_firebase()
 
 app = FastAPI(title="MedPal API", version="1.0.0")
 
@@ -12,6 +22,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(agent1_router)
 
 @app.get("/health")
 def health_check():
