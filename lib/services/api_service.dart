@@ -64,10 +64,8 @@ class ApiService {
     // Xử lý fake: Nếu user chát chữ "xong", giả màu bắt tín hiệu kết thúc
     if (message != null && message.toLowerCase().contains('xong')) {
        return {
-        "reply": "Cảm ơn bạn. Đây là mã QR dùng để quét tại quầy đăng ký bệnh viện.",
+        "reply": "Cảm ơn bạn. Thông tin đã được ghi nhận.",
         "stage": "completed",
-        // Một đoạn baseb4 mãnh liệt tạo thành ảnh hình vuông bé tí
-        "qr_code": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mNk+M9Qz0AEYBxVSF+FAAhKDveksOjmAAAAAElFTkSuQmCC"
       };
     }
 

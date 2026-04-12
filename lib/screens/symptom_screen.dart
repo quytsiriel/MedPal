@@ -84,7 +84,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
             isUser: false,
             timestamp: DateTime.now(),
             stage: response['stage'],
-            qrCodeBase64: response['qr_code'],
           ),
         );
       });
@@ -222,9 +221,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
                       ),
                     ),
 
-                    // Xử lý vẽ QR Code nếu Stage = Completed và trả về mã Data
-                    if (!isUser && message.qrCodeBase64 != null)
-                      _buildQRCode(message.qrCodeBase64!),
                   ],
                 ),
               ),
@@ -234,47 +230,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
         ],
       ),
     );
-  }
-
-  // 3. Render base64 string sang dạng hình ảnh QR
-  Widget _buildQRCode(String base64String) {
-    // Tách phần prefix "data:image/png;base64," nếu server đính kèm
-    String cleanBase64 = base64String;
-    if (base64String.contains(',')) {
-      cleanBase64 = base64String.split(',').last;
-    }
-
-    try {
-      final decodedBytes = base64Decode(cleanBase64);
-      return Container(
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFF96F1FA), width: 2),
-        ),
-        child: Column(
-          children: [
-            const Text("Mã bệnh án (Trình mã này tại quầy)", 
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-            ),
-            const SizedBox(height: 8),
-            Image.memory(
-              decodedBytes,
-              width: 150,
-              height: 150,
-              fit: BoxFit.cover,
-            ),
-          ],
-        ),
-      );
-    } catch (e) {
-      return Container(
-        margin: const EdgeInsets.only(top: 8),
-        child: const Text("⚠️ Không thể tải mã QR", style: TextStyle(color: Colors.red)),
-      );
-    }
   }
 
   Widget _buildInputArea() {
@@ -312,7 +267,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
                           border: InputBorder.none,
                           contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                         ),
-                        // Nếu user gõ chữ "xong", server sẽ test trả về qrcode
+                        // Nếu user gõ chữ "xong", server sẽ test trả về success
                         onSubmitted: _isLoading ? null : _handleSubmitted,
                       ),
                     ),

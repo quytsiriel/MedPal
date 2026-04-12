@@ -72,3 +72,9 @@
 2026-04-10 07:17:22.780: [INFO] OnDoneLoading sync enabled: 1
 2026-04-10 07:17:36.314: [INFO] Sync initialization duration: 5299ms
 2026-04-10 07:18:30.633: [INFO] VisibilityChanged: 0
+2026-04-11 04:47:13.078: [INFO] OnDoneLoading sync enabled: 0
+2026-04-11 04:47:14.820: [INFO] Primary account changed.
+2026-04-11 04:47:14.820: [INFO] OnPrimaryAccountChanged PrimaryAccountChangeEvent::Type::kSet
+2026-04-11 04:47:46.170: [INFO] VisibilityChanged: 0
+2026-04-11 06:04:50.928: [INFO] OnDoneLoading sync enabled: 1
+2026-04-11 06:15:52.364: [INFO] VisibilityChanged: 0

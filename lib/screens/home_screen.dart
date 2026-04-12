@@ -58,10 +58,21 @@ class _HomeScreenState extends State<HomeScreen> {
   void _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
     
+    final inputLower = text.toLowerCase();
+    
+    // MOCK: Keyword routing
+    if (inputLower.contains("đơn thuốc")) {
+      context.go('/prescriptions');
+      return;
+    } else if (inputLower.contains("điều hướng") || inputLower.contains("chỉ đường")) {
+      context.go('/navigation');
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _currentReply = "MedPal đang phân tích triệu chứng của bạn...";
-      _showHospitalRecommendations = false;
+      _showHospitalRecommendations = false; // (Không còn dùng nhưng cứ để lại để an toàn state)
     });
 
     // MOCK: Delay 1.5s để giả lập xử lý
@@ -126,9 +137,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _showEmergencyActionDialog();
     } else {
       setState(() {
-        _currentReply = "Đừng quá lo lắng. Hãy nghỉ ngơi, uống nhiều nước ấm.\nNếu các triệu chứng kéo dài hoặc nặng lên, hãy đến các phòng khám gần nhất dưới đây để kiểm tra nhé.";
-        _showHospitalRecommendations = true;
+        _currentReply = "Đừng quá lo lắng. Hãy nghỉ ngơi, uống nhiều nước ấm.\nNếu các triệu chứng kéo dài, hãy xem danh sách phòng khám trên màn hình nhé.";
       });
+      _showHospitalRecommendationsDialog();
     }
   }
 
@@ -177,7 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.directions, color: Colors.white, size: 28),
-                label: const Text("CHỈ ĐƯỜNG ĐẾN BỆNH VIỆN", textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                label: const Text("CHỈ ĐƯỜNG ĐẾN BV GẦN NHẤT", textAlign: TextAlign.center, style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF1976D2),
                   padding: const EdgeInsets.symmetric(vertical: 16),
@@ -185,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 onPressed: () {
                    Navigator.pop(ctx);
+                   context.go('/navigation');
                 },
               ),
             ),
@@ -202,43 +214,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 3. Popup hiển thị QR Code thay vì dính trong bong bóng
-  void _showQRDialog(String base64String) {
-    String cleanBase64 = base64String.contains(',') ? base64String.split(',').last : base64String;
-    try {
-      final decoded = base64Decode(cleanBase64);
-      showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          title: const Text("Mã bệnh án", textAlign: TextAlign.center, style: TextStyle(color: Color(0xFF006B70), fontWeight: FontWeight.bold)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-               ClipRRect(
-                 borderRadius: BorderRadius.circular(16),
-                 child: Image.memory(decoded, width: 200, height: 200, fit: BoxFit.cover),
-               ),
-               const SizedBox(height: 16),
-               const Text("Vui lòng đưa mã này cho nhân viên y tế tại quầy đăng ký.", 
-                textAlign: TextAlign.center,
-                style: TextStyle(height: 1.4, color: Color(0xFF576162)),
-               ),
-            ]
-          ),
-          actions: [
-             TextButton(
-               onPressed: () => Navigator.pop(ctx), 
-               child: const Text("Đóng", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF006B70)))
-             )
-          ]
-        )
-      );
-    } catch(e) {
-       // Ignore decode err
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -250,8 +225,6 @@ class _HomeScreenState extends State<HomeScreen> {
               _buildCustomHeader(context),
               const SizedBox(height: 24),
               _buildSpeechBubble(context),
-              const SizedBox(height: 16),
-              _buildHospitalRecommendations(),
               const SizedBox(height: 16),
               _buildRobotMascot(context),
               const SizedBox(height: 16),
@@ -269,6 +242,41 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: 0,
+        type: BottomNavigationBarType.fixed, // Giữ fixed để phòng hờ sau này teammate có thêm nút thứ 4, thứ 5
+        selectedItemColor: const Color(0xFF006B70),
+        unselectedItemColor: Colors.grey,
+        onTap: (index) {
+          switch (index) {
+            case 0:
+              context.go('/'); // Trang hiện tại (Symptoms)
+              break;
+            case 1:
+              context.go('/navigation'); // Agent 2
+              break;
+            case 2:
+              context.go('/prescriptions'); // Agent 3
+              break;
+            // TODO (Teammate): Mở rộng logic chuyển trang (case 3, case 4...) cho Agent mới ở đây
+          }
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.medical_services_rounded),
+            label: 'Khám bệnh',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.navigation_rounded),
+            label: 'Chỉ đường',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.receipt_long_rounded),
+            label: 'Đơn thuốc',
+          ),
+          // TODO (Teammate): Khi có Agent mới, copy BottomNavigationBarItem và dán vào dưới dòng này
+        ],
       ),
     );
   }
@@ -340,71 +348,91 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildHospitalRecommendations() {
-    if (!_showHospitalRecommendations) return const SizedBox.shrink();
-    
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "📍 Đề xuất phòng khám lân cận",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF006B70)),
+  void _showHospitalRecommendationsDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        contentPadding: const EdgeInsets.all(20),
+        title: const Row(
+          children: [
+            Icon(Icons.location_on_rounded, color: Color(0xFF006B70)),
+            SizedBox(width: 8),
+            Expanded(child: Text("Đề xuất phòng khám", style: TextStyle(fontSize: 18, color: Color(0xFF006B70), fontWeight: FontWeight.bold))),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildHospitalCard(ctx, "Bệnh viện Đa khoa Medlatec", "Cách đây 1.2 km", "Đang mở cửa"),
+              const SizedBox(height: 12),
+              _buildHospitalCard(ctx, "Phòng khám Đa khoa Thu Cúc", "Cách đây 2.5 km", "Đang mở cửa"),
+              const SizedBox(height: 12),
+              _buildHospitalCard(ctx, "Bệnh viện Bạch Mai", "Cách đây 4.0 km", "Cấp cứu 24/7", isEmergency: true),
+            ],
           ),
-          const SizedBox(height: 16),
-          _buildHospitalCard("Bệnh viện Đa khoa Medlatec", "Cách đây 1.2 km", "Đang mở cửa"),
-          const SizedBox(height: 12),
-          _buildHospitalCard("Phòng khám Đa khoa Thu Cúc", "Cách đây 2.5 km", "Đang mở cửa"),
-          const SizedBox(height: 12),
-          _buildHospitalCard("Bệnh viện Bạch Mai", "Cách đây 4.0 km", "Cấp cứu 24/7", isEmergency: true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Đóng", style: TextStyle(color: Colors.grey, fontSize: 16, fontWeight: FontWeight.bold)),
+          )
         ],
-      ),
+      )
     );
   }
 
-  Widget _buildHospitalCard(String name, String distance, String status, {bool isEmergency = false}) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          )
-        ],
-        border: Border.all(color: isEmergency ? Colors.red.withOpacity(0.3) : const Color(0xFFE5F1F1)),
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: const Color(0xFFF4FAFA), borderRadius: BorderRadius.circular(12)),
-            child: const Icon(Icons.local_hospital_rounded, color: Color(0xFF006A71), size: 28),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF2C3E50))),
-                const SizedBox(height: 4),
-                Text(distance, style: const TextStyle(color: Color(0xFF7F8C8D), fontSize: 13)),
-                const SizedBox(height: 4),
-                Text(status, style: TextStyle(color: isEmergency ? Colors.red : Colors.green, fontSize: 12, fontWeight: FontWeight.w600)),
-              ],
+  Widget _buildHospitalCard(BuildContext ctx, String name, String distance, String status, {bool isEmergency = false}) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.pop(ctx);
+        context.go('/navigation'); // Chuyển hướng sang Agent 2
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            )
+          ],
+          border: Border.all(color: isEmergency ? Colors.red.withOpacity(0.3) : const Color(0xFFE5F1F1)),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: const Color(0xFFF4FAFA), borderRadius: BorderRadius.circular(12)),
+              child: const Icon(Icons.local_hospital_rounded, color: Color(0xFF006A71), size: 28),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.directions_rounded, color: Colors.blueAccent, size: 28),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Mở chỉ đường tới $name trên Google Maps...")));
-            },
-          )
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF2C3E50))),
+                  const SizedBox(height: 4),
+                  Text(distance, style: const TextStyle(color: Color(0xFF7F8C8D), fontSize: 12)),
+                  const SizedBox(height: 4),
+                  Text(status, style: TextStyle(color: isEmergency ? Colors.red : Colors.green, fontSize: 12, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.directions_rounded, color: Colors.blueAccent, size: 28),
+              onPressed: () {
+                Navigator.pop(ctx);
+                context.go('/navigation'); // Chuyển hướng sang Agent 2
+              },
+            )
+          ],
+        ),
       ),
     );
   }
