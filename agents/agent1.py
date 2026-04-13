@@ -4,8 +4,7 @@ import uuid
 from datetime import datetime, timezone
 import json
 import os
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from services.firebase import get_db
 
 router = APIRouter(prefix="/agent1", tags=["Agent 1"]) # tạo router cho agent 1, cho tiền tố /agent1
@@ -78,11 +77,7 @@ def chat_with_agent1(request: ChatRequest):
     session = get_session(request.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-        
-    # Kiểm tra biến môi trường GEMINI API Key
-    if not os.environ.get("GEMINI_API_KEY"):
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not set")
-        
+
     # Nạp nội dung system prompt từ file
     prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "agent1_system.txt")
     with open(prompt_path, "r", encoding="utf-8") as f:
@@ -90,29 +85,32 @@ def chat_with_agent1(request: ChatRequest):
         
     # Tạo nội dung gửi lên: Lịch sử trò chuyện + tin nhắn mới từ user
     history = session.get("conversation_history", [])
-    history_text = "\n".join([f"{item['role']}: {item['content']}" for item in history])
-    contents = f"{history_text}\nuser: {request.message}"
+    messages = [{"role": "system", "content": system_instruction}]
+    for item in history:
+        messages.append({"role": item["role"], "content": item["content"]})
+    messages.append({"role": "user", "content": request.message})
     
-    # 2. Gọi genai
-    client = genai.Client()
+    # 2. Gọi Ollama qua chuẩn OpenAI-compatible API
+    client = OpenAI(
+        base_url=os.environ.get("OLLAMA_BASE_URL", "http://124.197.18.87:11434/v1"),
+        api_key="ollama",  # Ollama không yêu cầu API key thật
+    )
     try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=contents,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.3,
-                system_instruction=system_instruction
-            )
+        response = client.chat.completions.create(
+            model=os.environ.get("OLLAMA_MODEL", "puyangwang/medgemma-27b-it:q4_0"),
+            messages=messages,
+            temperature=0.3,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini API error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"LLM API error: {str(e)}")
         
-    # 3. Parse JSON
+    # 3. Parse JSON từ response của model
+    raw_text = response.choices[0].message.content
     try:
-        ai_data = json.loads(response.text)
+        ai_data = json.loads(raw_text)
     except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Failed to parse Gemini response as JSON")
+        # Nếu model không trả về JSON đúng chuẩn, wrap lại thành JSON hợp lệ
+        ai_data = {"reply": raw_text, "emergency": False, "stage": "collecting"}
         
     reply_text = ai_data.get("reply", "Xin lỗi, tôi không hiểu bạn nói gì.")
     is_emergency = ai_data.get("emergency", False)
@@ -145,3 +143,5 @@ def chat_with_agent1(request: ChatRequest):
         emergency=is_emergency,
         stage=stage
     )
+
+

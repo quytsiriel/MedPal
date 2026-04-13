@@ -1,9 +1,11 @@
 fastapi
 uvicorn
-google-genai
+openai
 firebase-admin
-google-adk
 apscheduler
 python-multipart
 python-dotenv
 
+apscheduler
+python-multipart
+python-dotenv
