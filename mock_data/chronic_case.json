@@ -1,0 +1,12 @@
+{
+  "scenario": "Trường hợp Mãn Tính - Khám Tuyến Định Kỳ",
+  "request": {
+    "session_id": "sess-ch003",
+    "message": "Hôm nay tôi đến lượt đi lấy thuốc tiểu đường định kỳ và cần kiểm tra lại đường huyết buổi sáng."
+  },
+  "expected_backend_response": {
+    "reply": "Rất tốt. Tôi sẽ hướng dẫn bạn ưu tiên luồng khám lấy số tại Khoa Nội Tiết để xét nghiệm đường huyết sớm nhé. Dưới đây là sơ đồ hướng dẫn đến đó.",
+    "stage": "completed",
+    "is_severe": false
+  }
+}

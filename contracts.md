@@ -53,7 +53,33 @@ Gửi tin nhắn (text hoặc voice) tiếp theo trong luồng chẩn đoán/câ
 
 ## 2. Agent 2: Navigation & Routing
 
-### 2.1 Navigate
+### 2.1 Get Nearby Hospitals
+Lấy danh sách các bệnh viện/phòng khám gần vị trí của người dùng.
+- **URL**: `/agent2/hospitals`
+- **Method**: `POST`
+- **Request Body**:
+  ```json
+  {
+    "lat": "number",
+    "lng": "number",
+    "radius": "number (optional, default: 5000)"
+  }
+  ```
+- **Response Schema** (200 OK):
+  ```json
+  [
+    {
+      "name": "string",
+      "address": "string",
+      "open_status": "string",
+      "lat": "number",
+      "lng": "number",
+      "photo_url": "string (optional)"
+    }
+  ]
+  ```
+
+### 2.2 Navigate
 Nhận chỉ dẫn từ cổng vào bệnh viện cụ thể.
 - **URL**: `/agent2/navigate`
 - **Method**: `POST`
@@ -79,7 +105,7 @@ Nhận chỉ dẫn từ cổng vào bệnh viện cụ thể.
   - `400 Bad Request`: `session_id` hoặc `hospital_name` trống.
   - `404 Not Found`: Không tìm thấy dữ liệu bản đồ cho bệnh viện này.
 
-### 2.2 Update Department
+### 2.3 Update Department
 Cập nhật khoa khám bệnh trong quá trình di chuyển (nếu có thay đổi hoặc đến chốt trung gian).
 - **URL**: `/agent2/update-dept`
 - **Method**: `POST`

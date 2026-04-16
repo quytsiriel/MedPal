@@ -1,7 +1,8 @@
-import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class SymptomScreen extends StatefulWidget {
   const SymptomScreen({super.key});
@@ -17,6 +18,9 @@ class _SymptomScreenState extends State<SymptomScreen> {
   bool _isLoading = false;
   bool _isInit = true; // Trạng thái đang bốc sessionId ở lần đầu mở
   String? _currentSessionId;
+  
+  final stt.SpeechToText _speechToText = stt.SpeechToText();
+  bool _isMicPressed = false;
 
   @override
   void initState() {
@@ -52,6 +56,32 @@ class _SymptomScreenState extends State<SymptomScreen> {
         setState(() => _isInit = false);
       }
     }
+  }
+
+  // 1b. STT Handlers
+  void _onMicTapDown() async {
+    setState(() => _isMicPressed = true);
+    
+    // Yêu cầu STT chạy dưới nền
+    bool available = await _speechToText.initialize();
+    if (available && _isMicPressed) {
+      _speechToText.listen(
+        onResult: (val) => setState(() {
+          _textController.text = val.recognizedWords;
+        }),
+        localeId: 'vi_VN',
+      );
+    } else if (!available && mounted) {
+       // Cảnh báo nếu test trên laptop k có mic
+       ScaffoldMessenger.of(context).showSnackBar(
+         const SnackBar(content: Text('Không thể kích hoạt Micro trên thiết bị hiện tại.'))
+       );
+    }
+  }
+
+  void _onMicTapUp() async {
+    setState(() => _isMicPressed = false);
+    await _speechToText.stop();
   }
 
   // 2. Logic gửi tin nhắn với session_id
@@ -161,6 +191,19 @@ class _SymptomScreenState extends State<SymptomScreen> {
                   ],
                 ),
               ),
+
+            if (_isMicPressed)
+               Padding(
+                 padding: const EdgeInsets.symmetric(vertical: 8.0),
+                 child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                       const Icon(Icons.mic, color: Colors.red, size: 18),
+                       const SizedBox(width: 8),
+                       Text('Đang ghi âm...', style: TextStyle(color: Colors.red.shade400, fontWeight: FontWeight.bold, fontStyle: FontStyle.italic)),
+                    ]
+                 )
+               ),
 
             // Bottom Input Bar
             _buildInputArea(),
@@ -283,16 +326,24 @@ class _SymptomScreenState extends State<SymptomScreen> {
             ),
             const SizedBox(width: 12),
             GestureDetector(
-              onTap: () {
-                // TBD: Tích hợp Ghi âm
-              },
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: const BoxDecoration(
-                  color: Color(0xFF006A71),
+              onTapDown: (_) => _onMicTapDown(),
+              onTapUp: (_) => _onMicTapUp(),
+              onTapCancel: () => _onMicTapUp(),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: EdgeInsets.all(_isMicPressed ? 18 : 14),
+                decoration: BoxDecoration(
+                  color: _isMicPressed ? Colors.red : const Color(0xFF006A71),
                   shape: BoxShape.circle,
+                  boxShadow: _isMicPressed 
+                    ? [BoxShadow(color: Colors.red.withOpacity(0.5), blurRadius: 15, spreadRadius: 3)] 
+                    : [],
                 ),
-                child: const Icon(Icons.mic_none, color: Colors.white, size: 28),
+                child: Icon(
+                  _isMicPressed ? Icons.mic : Icons.mic_none, 
+                  color: Colors.white, 
+                  size: _isMicPressed ? 32 : 28
+                ),
               ),
             ),
           ],

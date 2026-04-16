@@ -1,0 +1,12 @@
+{
+  "scenario": "Trường hợp Khẩn Cấp - Báo Động Đỏ",
+  "request": {
+    "session_id": "sess-em001",
+    "message": "Tôi đang bị đau tức ngực dữ dội, khó thở và đổ mồ hôi hột. Đau lan ra cánh tay trái."
+  },
+  "expected_backend_response": {
+    "reply": "Đây có thể là dấu hiệu khẩn cấp về tim mạch. Chúng tôi ghi nhận tình trạng khẩn cấp. Bạn có muốn kích hoạt gọi xe cấp cứu 115 hoặc hướng dẫn lập tức đến khoa Cấp Cứu không?",
+    "stage": "emergency_triage",
+    "is_severe": true
+  }
+}
