@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from services.firebase import init_firebase
-from agents.agent1 import router as agent1_router
+from agents.agent1_router import router as agent1_router
 
 # Initialize firebase before app starts
 init_firebase()
