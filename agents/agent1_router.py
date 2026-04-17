@@ -89,7 +89,7 @@ def validate_advice(advice: str) -> str:
 
 def create_client():
     return OpenAI(
-        base_url=os.environ.get("OLLAMA_BASE_URL", "http://124.197.18.187:11434/v1"),
+        base_url=os.environ.get("OLLAMA_BASE_URL", "http://124.197.18.120:11434/v1"),
         api_key="ollama"
     )
 
