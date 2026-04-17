@@ -14,5 +14,9 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     emergency: Optional[bool] = False
-    stage: str
+    stage: str  # "collecting" | "clarifying" | "complete_visit" | "complete_no_visit"
+    decision: Optional[str] = None  # "visit" | "no_visit"
+    advice: Optional[str] = None  # Lời khuyên khi no_visit
+    record: Optional[Dict] = None  # Hồ sơ JSON khi complete
+    recommended_dept: Optional[str] = None  # Khoa đề nghị khi visit
     qr_code: Optional[str] = None

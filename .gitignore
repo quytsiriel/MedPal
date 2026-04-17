@@ -37,3 +37,7 @@ pubspec.lock
 *.swp
 .DS_Store
 Thumbs.db
+chrome-device/
+Default/
+Local Storage/
+Session Storage/
