@@ -4,10 +4,15 @@ import 'package:http/http.dart' as http;
 import 'map_service.dart';
 
 class ApiService {
-  // Cloud: https://your-cloud-api.com
-  // Android Emulator: http://10.0.2.2:8000
-  // Laptop/Web Local: http://localhost:8000
-  static const String baseUrl = 'http://localhost:8000'; 
+  static String get baseUrl {
+    if (kIsWeb) {
+      return 'http://127.0.0.1:8000';
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return 'http://10.0.2.2:8000';
+    }
+    return 'http://127.0.0.1:8000';
+  }
 
   // ==========================================
   // AGENT 1: SYMPTOM COLLECTION
@@ -17,6 +22,8 @@ class ApiService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/agent1/start'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({}),
       ).timeout(const Duration(seconds: 10));
       
       if (response.statusCode == 200) {
@@ -26,7 +33,7 @@ class ApiService {
       print('ApiService Error (startSession): $e');
     }
 
-    // Fallback if backend is not reachable for symptoms
+    // Fallback if backend is not reachable
     return {
       "session_id": "temp-session",
       "message": "Chào bạn, tôi là bác sĩ trợ lý MedPal. Hiện tại tôi đang mất kết nối với máy chủ, nhưng bạn vẫn có thể mô tả triệu chứng.",
@@ -56,7 +63,7 @@ class ApiService {
     } catch (_) {}
 
     return {
-      "reply": "Dạ vâng, tôi đã ghi nhận. Bạn có thể nói thêm được không?",
+      "reply": "Dạ vâng, tôi đã ghi nhận. Xin mời bạn nói thêm...",
       "stage": "collecting"
     };
   }

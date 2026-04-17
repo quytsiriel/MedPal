@@ -19,6 +19,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = false;
   String _currentReply = "MedPal đang chuẩn bị...";
   VoidCallback? _onReplyFinishedAction;
+  String? _currentSessionId;
   final TextEditingController _typeController = TextEditingController();
 
   @override
@@ -33,58 +34,77 @@ class _HomeScreenState extends State<HomeScreen> {
     _startSession();
   }
 
+  // 1. Quản lý trạng thái Session
   Future<void> _startSession() async {
     setState(() => _isLoading = true);
     try {
       final res = await apiService.startSession();
       if (mounted) {
         setState(() {
+          _currentSessionId = res['session_id'];
           _currentReply = res['message'] ?? "Xin chào!";
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _currentReply = "Lỗi kết nối mạng...");
+      if (mounted) {
+        setState(() => _currentReply = "Lỗi kết nối mạng...");
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  // 2. Logic gửi tin nhắn thật qua API Gemini
   void _sendMessage(String text) async {
-    if (text.trim().isEmpty) return;
+    if (text.trim().isEmpty || _currentSessionId == null) return;
 
     final inputLower = text.toLowerCase();
 
+    // Keyword routing sang các phần khác
     if (inputLower.contains("đơn thuốc")) {
       context.go('/prescriptions');
+      return;
+    } else if (inputLower.contains("điều hướng") ||
+        inputLower.contains("chỉ đường")) {
+      context.go('/navigation');
       return;
     }
 
     setState(() {
-      _isLoading = false;
-      if (inputLower.contains("đau ngực") ||
-          inputLower.contains("khó thở") ||
-          inputLower.contains("mồ hôi")) {
+      _isLoading = true;
+      _currentReply = "MedPal đang phân tích triệu chứng của bạn...";
+    });
+
+    try {
+      final response = await apiService.chatSymptom(
+        sessionId: _currentSessionId!,
+        message: text,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
         _currentReply =
-            "Đây có thể là dấu hiệu khẩn cấp về tim mạch. Bạn có muốn gọi xe cấp cứu 115 hoặc hướng dẫn đến khoa Cấp Cứu gần nhất không?";
-        _onReplyFinishedAction = _showEmergencyActionDialog;
-      } else if (inputLower.contains("ho") ||
-          inputLower.contains("sổ mũi") ||
-          inputLower.contains("sốt") ||
-          inputLower.contains("cảm")) {
-        _currentReply =
-            "Có thể bạn đang bị cảm nhẹ. Bạn nên uống nước ấm, nghỉ ngơi. Nếu các triệu chứng kéo dài, tôi sẽ gợi ý phòng khám gần nhất nhé.";
-        _onReplyFinishedAction = _fetchAndShowHospitals;
-      } else if (inputLower.contains("tiểu đường") ||
-          inputLower.contains("định kỳ") ||
-          inputLower.contains("đường huyết")) {
-        _currentReply =
-            "Rất tốt. Tôi sẽ hướng dẫn bạn tìm cơ sở y tế gần nhất chuyên về Nội Tiết nhé!";
-        _onReplyFinishedAction = _fetchAndShowHospitals;
-      } else {
-        _currentReply = "MedPal đang phân tích triệu chứng của bạn...";
+            response['reply'] ?? "Lỗi: Không nhận được câu trả lời từ AI.";
+      });
+
+      // Nếu Gemini phân loại đây là khẩn cấp
+      if (response['emergency'] == true) {
         _onReplyFinishedAction = _showSeverityConfirmDialog;
       }
-    });
+      // Nếu Gemini nhận thấy đã thu thập đủ -> Đề xuất bệnh viện
+      else if (response['stage'] == 'completed') {
+        _onReplyFinishedAction = _fetchAndShowHospitals; // Using HEAD's robust location-based hospital fetch
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _currentReply = "Có lỗi xảy ra: $e";
+        });
+      }
+    }
   }
 
   void _showSeverityConfirmDialog() {
@@ -98,8 +118,13 @@ class _HomeScreenState extends State<HomeScreen> {
             Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 32),
             SizedBox(width: 8),
             Expanded(
-              child: Text("Báo động triệu chứng",
-                  style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
+              child: Text(
+                "Báo động triệu chứng",
+                style: TextStyle(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
           ],
         ),
@@ -115,10 +140,19 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             style: TextButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            child: const Text("KHÔNG",
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.grey)),
+            child: const Text(
+              "KHÔNG",
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+
           ),
           ElevatedButton(
             onPressed: () {
@@ -128,10 +162,19 @@ class _HomeScreenState extends State<HomeScreen> {
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            child: const Text("CÓ",
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+            child: const Text(
+              "CÓ",
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+
           ),
         ],
       ),
@@ -166,25 +209,47 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             const Icon(Icons.emergency_outlined, color: Colors.red, size: 64),
             const SizedBox(height: 16),
-            const Text("TÌNH TRẠNG KHẨN CẤP",
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.red)),
+            const Text(
+              "TÌNH TRẠNG KHẨN CẤP",
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: Colors.red,
+              ),
+            ),
             const SizedBox(height: 16),
             const Text(
               "Hãy gọi 115 ngay bây giờ. Hoặc nhờ người thân đưa đến Khoa Cấp cứu gần nhất.",
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, height: 1.5, color: Colors.black87),
+              style: TextStyle(
+                fontSize: 16,
+                height: 1.5,
+                color: Colors.black87,
+              ),
             ),
             const SizedBox(height: 32),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.phone_in_talk, color: Colors.white, size: 28),
-                label: const Text("GỌI 115",
-                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                icon: const Icon(
+                  Icons.phone_in_talk,
+                  color: Colors.white,
+                  size: 28,
+                ),
+                label: const Text(
+                  "GỌI 115",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
                 onPressed: () async {
                   Navigator.pop(ctx);
@@ -196,14 +261,26 @@ class _HomeScreenState extends State<HomeScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.directions, color: Colors.white, size: 28),
-                label: const Text("TÌM BỆNH VIỆN GẦN NHẤT",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                icon: const Icon(
+                  Icons.directions,
+                  color: Colors.white,
+                  size: 28,
+                ),
+                label: const Text(
+                  "TÌM BỆNH VIỆN GẦN NHẤT",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF1976D2),
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
                 onPressed: () {
                   Navigator.pop(ctx);
@@ -215,10 +292,16 @@ class _HomeScreenState extends State<HomeScreen> {
             TextButton(
               onPressed: () {
                 Navigator.pop(ctx);
-                setState(() => _currentReply = "Tôi hi vọng bạn sẽ sớm nhận được sự hỗ trợ y tế kịp thời.");
+                setState(
+                  () => _currentReply =
+                      "Tôi hi vọng bạn sẽ sớm nhận được sự hỗ trợ y tế kịp thời.",
+                );
               },
-              child: const Text("Đóng", style: TextStyle(fontSize: 16, color: Colors.grey)),
-            )
+              child: const Text(
+                "Đóng",
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+            ),
           ],
         ),
       ),
@@ -488,9 +571,77 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
+<<<<<<< HEAD
     );
   }
 
+=======
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: 0,
+        type: BottomNavigationBarType
+            .fixed, // Giữ fixed để phòng hờ sau này teammate có thêm nút thứ 4, thứ 5
+        selectedItemColor: const Color(0xFF006B70),
+        unselectedItemColor: Colors.grey,
+        onTap: (index) {
+          switch (index) {
+            case 0:
+              context.go('/'); // Trang hiện tại (Symptoms)
+              break;
+            case 1:
+              context.go('/navigation'); // Agent 2
+              break;
+            case 2:
+              context.go('/prescriptions'); // Agent 3
+              break;
+            // TODO (Teammate): Mở rộng logic chuyển trang (case 3, case 4...) cho Agent mới ở đây
+          }
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.medical_services_rounded),
+            label: 'Khám bệnh',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.navigation_rounded),
+            label: 'Chỉ đường',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.receipt_long_rounded),
+            label: 'Đơn thuốc',
+          ),
+          // TODO (Teammate): Khi có Agent mới, copy BottomNavigationBarItem và dán vào dưới dòng này
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCustomHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+      child: Row(
+        children: [
+          const Text(
+            'MedPal',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF006B70),
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(
+              Icons.settings_rounded,
+              size: 30,
+              color: Color(0xFF006B70),
+            ),
+            onPressed: () {},
+          ),
+        ],
+      ),
+    );
+  }
+>>>>>>> origin/BackEnd-UI-Agent1
 
   Widget _buildSpeechBubble(BuildContext context) {
     return Padding(
@@ -519,7 +670,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       width: 24,
                       height: 24,
                       child: CircularProgressIndicator(
+<<<<<<< HEAD
                           strokeWidth: 3, color: Color(0xFF006A71)),
+=======
+                        strokeWidth: 3,
+                        color: Color(0xFF006A71),
+                      ),
+>>>>>>> origin/BackEnd-UI-Agent1
                     ),
                   ),
                 )
@@ -545,9 +702,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildRobotMascot(BuildContext context) {
-    const double heartWidth = 350.0;
-    const double heartHeight = 350.0;
-    const double heartBottomOffset = -5;
+    // -------------------------------------------------------------
+    // Tinh chỉnh kích thước và vị trí của trái tim tại đây:
+    const double heartWidth = 350.0; // Chiều ngang của trái tim
+    const double heartHeight = 350.0; // Chiều cao của trái tim
+    const double heartBottomOffset = -5; // Độ xa tính từ mép dưới của nhân vật
+    // -------------------------------------------------------------
 
     return Stack(
       alignment: Alignment.center,
@@ -566,31 +726,49 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-        Image.asset('assets/mascot.png', width: 320, height: 320, fit: BoxFit.contain),
-        GestureDetector(
-          onTapDown: (_) {
-            setState(() => _isHeartPressed = true);
-            // Proactively request GPS permission here (User initiated!)
-            // This ensures Chrome shows the location prompt immediately
-            mapService.getCurrentLocation();
-          },
-          onTapUp: (_) {
-            setState(() => _isHeartPressed = false);
-            _sendMessage("Giả lập thu âm...");
-          },
-          onTapCancel: () => setState(() => _isHeartPressed = false),
-          child: SizedBox(
-            width: heartWidth,
-            height: heartHeight,
-            child: AnimatedCrossFade(
-              firstChild: Image.asset('assets/heart_normal.png',
-                  fit: BoxFit.contain, width: heartWidth, height: heartHeight),
-              secondChild: Image.asset('assets/heart_pressed.png',
-                  fit: BoxFit.contain, width: heartWidth, height: heartHeight),
-              crossFadeState: _isHeartPressed
-                  ? CrossFadeState.showSecond
-                  : CrossFadeState.showFirst,
-              duration: const Duration(milliseconds: 150),
+        // Mascot Image
+        Image.asset(
+          'assets/mascot.png',
+          width: 320,
+          height: 320,
+          fit: BoxFit.contain,
+        ),
+
+        // Nút Mic - Bắt sự kiện Nhấn nhả sử dụng ảnh Assets (Tắt viền trắng)
+        Positioned(
+          bottom: heartBottomOffset, // Vị trí trái tim lên xuống
+          child: GestureDetector(
+            onTapDown: (_) {
+              setState(() => _isHeartPressed = true);
+              // Proactively request GPS permission here
+              mapService.getCurrentLocation();
+            },
+            onTapUp: (_) {
+              setState(() => _isHeartPressed = false);
+              _sendMessage("Giả lập thu âm...");
+            },
+            onTapCancel: () => setState(() => _isHeartPressed = false),
+            child: SizedBox(
+              width: heartWidth,
+              height: heartHeight,
+              child: AnimatedCrossFade(
+                firstChild: Image.asset(
+                  'assets/heart_normal.png',
+                  fit: BoxFit.contain,
+                  width: heartWidth,
+                  height: heartHeight,
+                ),
+                secondChild: Image.asset(
+                  'assets/heart_pressed.png',
+                  fit: BoxFit.contain,
+                  width: heartWidth,
+                  height: heartHeight,
+                ),
+                crossFadeState: _isHeartPressed
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                duration: const Duration(milliseconds: 150),
+              ),
             ),
           ),
         ),

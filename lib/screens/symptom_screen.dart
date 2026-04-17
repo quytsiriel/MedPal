@@ -121,7 +121,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
        setState(() {
           _messages.add(
             ChatMessage(
-              text: "Lỗi đường truyền mạng: \$e",
+              text: "Lỗi đường truyền mạng: $e",
               isUser: false,
               timestamp: DateTime.now(),
             ),
