@@ -139,9 +139,9 @@ async def reverse_geocode(lat: float, lng: float):
             data = res.json()
             if data['status'] == 'OK' and data['results']:
                 return {"address": data['results'][0]['formatted_address']}
-            return {"address": f"Tọa độ {lat}, {lng}"}
+            return {"address": "Không xác định được vị trí"}
         except:
-            return {"address": f"Tọa độ {lat}, {lng}"}
+            return {"address": "Không xác định được vị trí"}
 
 @router.get("/photo")
 async def proxy_photo(ref: str):

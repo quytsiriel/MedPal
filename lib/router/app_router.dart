@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../screens/home_screen.dart';
 import '../screens/symptom_screen.dart';
 import '../screens/prescription_screen.dart';
@@ -21,7 +22,9 @@ final appRouter = GoRouter(
       routes: [
         GoRoute(
           path: '/',
-          builder: (context, state) => const HomeScreen(),
+          pageBuilder: (context, state) => const NoTransitionPage(
+            child: HomeScreen(),
+          ),
         ),
         GoRoute(
           path: '/symptoms',
@@ -29,16 +32,20 @@ final appRouter = GoRouter(
         ),
         GoRoute(
           path: '/prescriptions',
-          builder: (context, state) => const PrescriptionScreen(),
+          pageBuilder: (context, state) => const NoTransitionPage(
+            child: PrescriptionScreen(),
+          ),
         ),
         GoRoute(
           path: '/navigation',
-          builder: (context, state) {
+          pageBuilder: (context, state) {
             final extra = state.extra as Map<String, dynamic>?;
-            return NavigationScreen(
-              targetHospital: extra?['hospital'] as Hospital?,
-              userLat: extra?['userLat'] as double?,
-              userLng: extra?['userLng'] as double?,
+            return NoTransitionPage(
+              child: NavigationScreen(
+                targetHospital: extra?['hospital'] as Hospital?,
+                userLat: extra?['userLat'] as double?,
+                userLng: extra?['userLng'] as double?,
+              ),
             );
           },
         ),
@@ -53,8 +60,22 @@ class ScaffoldWithNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final String location = GoRouterState.of(context).uri.path;
+    // Show header only for the 3 main tabs
+    final bool showHeader = location == '/' || 
+                             location == '/navigation' || 
+                             location == '/prescriptions';
+
     return Scaffold(
-      body: child,
+      backgroundColor: const Color(0xFFF4FAFA),
+      body: SafeArea(
+        child: Column(
+          children: [
+            if (showHeader) _buildPersistentHeader(context),
+            Expanded(child: child),
+          ],
+        ),
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _calculateSelectedIndex(context),
         type: BottomNavigationBarType.fixed,
@@ -85,6 +106,41 @@ class ScaffoldWithNavBar extends StatelessWidget {
           BottomNavigationBarItem(
             icon: Icon(Icons.receipt_long_rounded),
             label: 'Đơn thuốc',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPersistentHeader(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+      child: Row(
+        children: [
+          Image.asset('assets/mascot.png', width: 44, height: 44),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'MedPal',
+                style: GoogleFonts.lexend(
+                  fontSize: 24, 
+                  fontWeight: FontWeight.bold, 
+                  color: const Color(0xFF006B70),
+                  height: 1.1,
+                ),
+              ),
+              Text(
+                'Người bạn đồng hành y tế của bạn',
+                style: GoogleFonts.lexend(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ],
       ),

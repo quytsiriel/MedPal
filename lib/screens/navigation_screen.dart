@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -82,24 +83,6 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     final currentHospital = navState.currentHospital;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Điều hướng'),
-        backgroundColor: const Color(0xFFF4FAFA),
-        elevation: 0,
-        foregroundColor: const Color(0xFF006B70),
-        leading: currentHospital != null
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back),
-                onPressed: () {
-                  if (widget.targetHospital != null) {
-                    Navigator.pop(context); 
-                  } else {
-                    ref.read(navigationProvider.notifier).reset();
-                  }
-                },
-              )
-            : null,
-      ),
       backgroundColor: const Color(0xFFF4FAFA),
       body: navState.isLoading
           ? const Center(

@@ -7,8 +7,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from services.firebase import init_firebase
-from agents.agent1 import router as agent1_router
+from agents.agent1_router import router as agent1_router
 from agents.agent2 import router as agent2_router
+from agents.agent3 import router as agent3_router
 
 # Initialize firebase before app starts
 init_firebase()
@@ -26,6 +27,7 @@ app.add_middleware(
 
 app.include_router(agent1_router)
 app.include_router(agent2_router)
+app.include_router(agent3_router)
 
 @app.get("/health")
 def health_check():

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -467,8 +468,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              _buildCustomHeader(context),
-              const SizedBox(height: 24),
+              const SizedBox(height: 4),
               _buildSpeechBubble(context),
               const SizedBox(height: 16),
               _buildRobotMascot(context),
@@ -491,25 +491,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildCustomHeader(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-      child: Row(
-        children: [
-          const Text(
-            'MedPal',
-            style: TextStyle(
-                fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF006B70)),
-          ),
-          const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.settings_rounded, size: 30, color: Color(0xFF006B70)),
-            onPressed: () {},
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildSpeechBubble(BuildContext context) {
     return Padding(
@@ -586,30 +567,30 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         Image.asset('assets/mascot.png', width: 320, height: 320, fit: BoxFit.contain),
-            onTapDown: (_) {
-              setState(() => _isHeartPressed = true);
-              // Proactively request GPS permission here (User initiated!)
-              // This ensures Chrome shows the location prompt immediately
-              mapService.getCurrentLocation();
-            },
-            onTapUp: (_) {
-              setState(() => _isHeartPressed = false);
-              _sendMessage("Giả lập thu âm...");
-            },
-            onTapCancel: () => setState(() => _isHeartPressed = false),
-            child: SizedBox(
-              width: heartWidth,
-              height: heartHeight,
-              child: AnimatedCrossFade(
-                firstChild: Image.asset('assets/heart_normal.png',
-                    fit: BoxFit.contain, width: heartWidth, height: heartHeight),
-                secondChild: Image.asset('assets/heart_pressed.png',
-                    fit: BoxFit.contain, width: heartWidth, height: heartHeight),
-                crossFadeState: _isHeartPressed
-                    ? CrossFadeState.showSecond
-                    : CrossFadeState.showFirst,
-                duration: const Duration(milliseconds: 150),
-              ),
+        GestureDetector(
+          onTapDown: (_) {
+            setState(() => _isHeartPressed = true);
+            // Proactively request GPS permission here (User initiated!)
+            // This ensures Chrome shows the location prompt immediately
+            mapService.getCurrentLocation();
+          },
+          onTapUp: (_) {
+            setState(() => _isHeartPressed = false);
+            _sendMessage("Giả lập thu âm...");
+          },
+          onTapCancel: () => setState(() => _isHeartPressed = false),
+          child: SizedBox(
+            width: heartWidth,
+            height: heartHeight,
+            child: AnimatedCrossFade(
+              firstChild: Image.asset('assets/heart_normal.png',
+                  fit: BoxFit.contain, width: heartWidth, height: heartHeight),
+              secondChild: Image.asset('assets/heart_pressed.png',
+                  fit: BoxFit.contain, width: heartWidth, height: heartHeight),
+              crossFadeState: _isHeartPressed
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 150),
             ),
           ),
         ),

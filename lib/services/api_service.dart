@@ -150,12 +150,12 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
-        return data['address'] ?? "Vị trí của bạn ($lat, $lng)";
+        return data['address'] ?? "Không xác định được vị trí";
       }
     } catch (e) {
       print('ApiService Error (reverseGeocode): $e');
     }
-    return "Vị trí của bạn ($lat, $lng)";
+    return "Không xác định được vị trí";
   }
 
   // ==========================================
