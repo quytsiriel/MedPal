@@ -370,11 +370,6 @@ class _SymptomScreenState extends ConsumerState<SymptomScreen> {
         _isCompleted = true;
       }
     });
-
-    if (stage == 'completed' || stage == 'complete_visit' || 
-        replyStr.toLowerCase().contains("bệnh viện")) {
-      _showHospitalRecommendationsDialog();
-    }
   }
 
   void _scrollToBottom() {
