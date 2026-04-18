@@ -51,35 +51,7 @@ class _PrescriptionScreenState extends State<PrescriptionScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _medications = [
-      Medicine(
-        name: 'Paracetamol 500mg',
-        dosage: '1 viên / lần',
-        icon: 'pill',
-        schedule: [
-          ScheduleItem(time: '08:00', isTaken: true),
-          ScheduleItem(time: '20:00', isTaken: false),
-        ],
-      ),
-      Medicine(
-        name: 'Amoxicillin 250mg',
-        dosage: '2 viên / lần',
-        icon: 'capsule',
-        schedule: [
-          ScheduleItem(time: '07:00', isTaken: true),
-          ScheduleItem(time: '13:00', isTaken: true),
-          ScheduleItem(time: '19:00', isTaken: false),
-        ],
-      ),
-      Medicine(
-        name: 'Vitamin C 1000mg',
-        dosage: '1 viên sủi',
-        icon: 'effervescent',
-        schedule: [
-          ScheduleItem(time: '09:00', isTaken: false),
-        ],
-      ),
-    ];
+    _medications = [];
   }
 
   @override

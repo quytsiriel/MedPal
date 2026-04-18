@@ -40,53 +40,54 @@ Chỉ trả về duy nhất một đối tượng JSON hợp lệ như sau:
 }
 """
 
+from services.firebase import get_db
+import google.generativeai as genai
+import base64
+
 @router.post("/prescription")
 def scan_prescription(request: PrescriptionRequest):
-    client = OpenAI(
-        base_url=os.environ.get("OLLAMA_BASE_URL", "http://124.197.18.87:11434/v1"),
-        api_key="ollama", 
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Thiếu cấu hình GEMINI_API_KEY")
+        
+    genai.configure(api_key=api_key)
+    
+    # Cấu hình để luôn trả về JSON nếu muốn an toàn (Gemini 1.5 hỗ trợ cấu hình response_mime_type)
+    generation_config = genai.types.GenerationConfig(
+        temperature=0.0,
+        response_mime_type="application/json"
     )
     
-    # Chuẩn bị payload chuẩn Vision của OpenAI
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text", 
-                    "text": "Hãy trích xuất thông tin phân tích đơn thuốc trong hình ảnh này và trả về định dạng JSON nghiêm ngặt."
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{request.image_base64}"
-                    }
-                }
-            ]
-        }
-    ]
+    model = genai.GenerativeModel('gemini-2.5-flash', generation_config=generation_config)
+    
+    # Định dạng ảnh truyền từ frontend
+    image_dict = {
+        "mime_type": "image/jpeg",
+        "data": request.image_base64
+    }
     
     try:
-        response = client.chat.completions.create(
-            # Sử dụng model hỗ trợ vision tại server (ví dụ llava)
-            model=os.environ.get("OLLAMA_VISION_MODEL", "llava"),
-            messages=messages,
-            temperature=0.0, # Nhiệt độ 0.0 để AI tập trung trích xuất độ trính xác cao
-        )
+        # Gọi Gemini xử lý ảnh với System Prompt
+        response = model.generate_content([image_dict, SYSTEM_PROMPT])
         
-        raw_text = response.choices[0].message.content
+        raw_text = response.text
         
-        # Dọn dẹp markdown rác (ví dụ: ```json ... ```) để parse thành python dict an toàn
+        # Dọn dẹp markdown rác nếu model đôi khi vẫn kẹp thêm (phòng hờ)
         if "```json" in raw_text:
             raw_text = raw_text.split("```json")[1].split("```")[0].strip()
         elif "```" in raw_text:
             raw_text = raw_text.split("```")[1].split("```")[0].strip()
             
         data = json.loads(raw_text)
+        
+        # Lưu vào Firestore vào session hiện tại để các Agent khác có thể tham khảo
+        db = get_db()
+        doc_ref = db.collection("sessions").document(request.session_id)
+        if doc_ref.get().exists:
+            doc_ref.set({"prescription": data}, merge=True)
+            
         return data
         
     except Exception as e:
-        print(f"Agent 3 Error: {str(e)}")
-        # Ollama tắt hoặc có lỗi, ném HTTP 500 để ứng dụng báo lỗi thật
+        print(f"Agent 3 Error (Gemini API): {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
