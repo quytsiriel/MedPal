@@ -43,12 +43,13 @@ def init_firebase():
                 firebase_admin.initialize_app()
         except Exception as e:
             print(f"Warning: Firebase init issue: {e}")
-
+            
+        
 def get_db():
     try:
         if not firebase_admin._apps:
             init_firebase()
-        return firestore.client()
+        return firestore.client(database_id="medpal-dev-493103")
     except Exception as e:
         print("MOCKING FIREBASE: Using in-memory storage (no serviceAccountKey.json found)")
         return _fake_db

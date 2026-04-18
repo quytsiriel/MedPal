@@ -119,11 +119,19 @@ class _SymptomScreenState extends State<SymptomScreen> {
   }
 
   // ── Voice Recording Methods ─────────────────────
+  bool _isProcessingMic = false;
+
   Future<void> _toggleRecording() async {
-    if (_isRecording) {
-      await _stopRecordingAndSend();
-    } else {
-      await _startRecording();
+    if (_isProcessingMic) return;
+    _isProcessingMic = true;
+    try {
+      if (_isRecording) {
+        await _stopRecordingAndSend();
+      } else {
+        await _startRecording();
+      }
+    } finally {
+      _isProcessingMic = false;
     }
   }
 
@@ -139,6 +147,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
                 numChannels: 1,
               );
         await _audioRecorder.start(config, path: filePath);
+        _recordTimer?.cancel();
         setState(() {
           _isRecording = true;
           _recordDuration = Duration.zero;
