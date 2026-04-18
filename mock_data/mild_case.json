@@ -1,0 +1,12 @@
+{
+  "scenario": "Trường hợp Nhẹ - Cảm Cúm Thông Thường",
+  "request": {
+    "session_id": "sess-mi002",
+    "message": "Từ sáng tới giờ tôi bị ho khúng khoắng, sổ mũi, hơi sốt nhẹ và hơi gai người lúc đi làm."
+  },
+  "expected_backend_response": {
+    "reply": "Dấu hiệu của bạn cho thấy có thể bạn đang bị cảm hoặc viêm đường hô hấp nhẹ. Bạn nên uống nhiều nước ấm, nghỉ ngơi. Nếu các triệu chứng kéo dài hoặc nặng thêm, chúng tôi sẽ gợi ý một số phòng khám Tai Mũi Họng gần nhất.",
+    "stage": "completed",
+    "is_severe": false
+  }
+}

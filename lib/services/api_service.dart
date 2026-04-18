@@ -1,16 +1,20 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart'; // Dùng foundation thay cho dart:io để không gây crash trên Web
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'map_service.dart';
 
 class ApiService {
   static String get baseUrl {
     if (kIsWeb) {
-      return 'http://127.0.0.1:8000';
+      // Browsers prefer 'localhost' for local development CORS
+      return 'http://localhost:8000';
     }
     if (defaultTargetPlatform == TargetPlatform.android) {
+      // 10.0.2.2 is the special alias for the host machine in Android Emulator
       return 'http://10.0.2.2:8000';
     }
-    return 'http://127.0.0.1:8000';
+    // Fallback for iOS simulator or other desktop platforms
+    return 'http://localhost:8000';
   }
 
   // ==========================================
@@ -26,7 +30,7 @@ class ApiService {
       body: jsonEncode({}), // Gửi body trống
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
     throw Exception('Failed to start session: ${response.statusCode}');
   }
@@ -53,12 +57,13 @@ class ApiService {
     );
     
     if (response.statusCode == 200) {
-      return jsonDecode(response.body);
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
+    
     // Trích xuất detail từ backend error response
     String detail = '';
     try {
-      final errorBody = jsonDecode(response.body);
+      final errorBody = jsonDecode(utf8.decode(response.bodyBytes));
       detail = errorBody['detail'] ?? response.body;
     } catch (_) {
       detail = response.body;
@@ -66,42 +71,141 @@ class ApiService {
     throw Exception('Chat failed (${response.statusCode}): $detail');
   }
 
-
   // ==========================================
-  // AGENT 2: NAVIGATION & ROUTING
+  // AGENT 2: NAVIGATION & ROUTING (REAL GPS)
   // ==========================================
 
-  /// [POST] /agent2/navigate
+  Future<List<Hospital>> getNearbyHospitals(double lat, double lng) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/agent2/hospitals'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "lat": lat,
+          "lng": lng,
+          "radius": 5000,
+        }),
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
+        return data.map((json) {
+          String? photoUrl = json['photo_url'];
+          if (photoUrl != null && kIsWeb) {
+             photoUrl = "https://corsproxy.io/?${Uri.encodeComponent(photoUrl)}";
+          }
+          return Hospital(
+            name: json['name'],
+            address: json['address'],
+            openStatus: json['open_status'],
+            lat: json['lat'],
+            lng: json['lng'],
+            photoUrl: photoUrl,
+          );
+        }).toList();
+      }
+    } catch (e) {
+      print('ApiService Error (getNearbyHospitals): $e');
+    }
+
+    // Final fallback to MapService if Agent 2 Cloud is down
+    return mapService.getNearbyHospitals(lat, lng);
+  }
+
   Future<Map<String, dynamic>> navigate(String sessionId, String hospitalName) async {
-    await Future.delayed(const Duration(seconds: 1));
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/agent2/navigate'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "session_id": sessionId,
+          "hospital_name": hospitalName,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+    } catch (_) {}
+
     return {
-      "steps": [
-        "Đi thẳng 50m đến tiền sảnh",
-        "Rẽ trái ở quầy lễ tân A",
-        "Lên thang máy số 3 tới phòng 204"
-      ],
-      "map_image_url": "https://maps.fake/hospital_map.png"
+      "steps": ["Đi thẳng vào cổng chính", "Hỏi quầy lễ tân để được hướng dẫn thêm"],
     };
   }
 
+  Future<Map<String, dynamic>> updateDepartment(String sessionId, String department) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/agent2/update-dept'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "session_id": sessionId,
+          "department": department,
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+    } catch (_) {}
+
+    return {"status": "default", "next_steps": ["Theo sau biển chỉ dẫn"]};
+  }
+
+  Future<String> reverseGeocode(double lat, double lng) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/agent2/geocoding?lat=$lat&lng=$lng'),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        return data['address'] ?? "Không xác định được vị trí";
+      }
+    } catch (e) {
+      print('ApiService Error (reverseGeocode): $e');
+    }
+    return "Không xác định được vị trí";
+  }
+
+  Future<Map<String, dynamic>> getBuildingCoords(String department) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/agent2/building-coords?department=${Uri.encodeComponent(department)}'),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+    } catch (e) {
+      print('ApiService Error (getBuildingCoords): $e');
+    }
+    return {};
+  }
 
   // ==========================================
   // AGENT 3: PRESCRIPTION OCR
   // ==========================================
 
-  /// [POST] /agent3/prescription
   Future<Map<String, dynamic>> scanPrescription(String sessionId, String imageBase64) async {
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/agent3/prescription'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          "session_id": sessionId,
+          "image_base64": imageBase64,
+        }),
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+    } catch (_) {}
+
     return {
-      "medications": [
-        {
-          "name": "Paracetamol 500mg",
-          "dosage": "1 viên/lần",
-          "instructions": "Uống sau khi ăn sáng, khi sốt trên 38.5 độ."
-        }
-      ],
-      "schedule_synced": true,
-      "summary": "Đơn thuốc bạn có 1 loại kháng viêm hạ sốt và 1 kháng sinh mạnh."
+      "medications": [],
+      "summary": "Hiện tại không thể phân tích đơn thuốc. Vui lòng thử lại sau."
     };
   }
 }
