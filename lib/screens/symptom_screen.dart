@@ -4,11 +4,13 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:record/record.dart';
 
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
 import '../services/audio_reader.dart';
+import '../services/health_tips_provider.dart';
 
 class SymptomScreen extends StatefulWidget {
   const SymptomScreen({super.key});
@@ -268,6 +270,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
     final advice = response['advice'] as String?;
     final record = response['record'] as Map<String, dynamic>?;
     final recommendedDept = response['recommended_dept'] as String?;
+    final selfCareTips = response['self_care_tips'] as Map<String, dynamic>?;
 
     setState(() {
       _messages.add(
@@ -280,6 +283,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
           advice: advice,
           record: record,
           recommendedDept: recommendedDept,
+          selfCareTips: selfCareTips,
         ),
       );
 
@@ -289,6 +293,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
       }
     });
   }
+
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -618,6 +623,11 @@ class _SymptomScreenState extends State<SymptomScreen> {
 
   // ── Complete No-Visit Card (🏡 Lời khuyên tại nhà) ──
   Widget _buildCompleteNoVisitCard(ChatMessage message) {
+    final tips = message.selfCareTips;
+    final avoidList = (tips?['avoid'] as List?)?.cast<String>() ?? [];
+    final doList = (tips?['do'] as List?)?.cast<String>() ?? [];
+    final whenToSeeDoc = tips?['when_to_see_doctor'] as String?;
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8.0),
       child: Row(
@@ -655,6 +665,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Header
                   const Row(
                     children: [
                       Icon(Icons.spa, size: 18, color: Color(0xFF28A745)),
@@ -670,6 +681,8 @@ class _SymptomScreenState extends State<SymptomScreen> {
                     ],
                   ),
                   const Divider(height: 16),
+
+                  // Summary text
                   Text(
                     message.text,
                     style: const TextStyle(
@@ -678,70 +691,109 @@ class _SymptomScreenState extends State<SymptomScreen> {
                       height: 1.5,
                     ),
                   ),
-                  if (message.advice != null && message.advice!.isNotEmpty) ...[
-                    const SizedBox(height: 12),
+
+                  // Nhóm: Nên làm
+                  if (doList.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    _buildTipGroup(
+                      icon: Icons.check_circle_outline,
+                      color: const Color(0xFF28A745),
+                      bgColor: const Color(0xFFEEF9F0),
+                      title: 'Nên làm',
+                      items: doList,
+                    ),
+                  ],
+
+                  // Nhóm: Kiêng
+                  if (avoidList.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    _buildTipGroup(
+                      icon: Icons.do_not_disturb_on_outlined,
+                      color: const Color(0xFFD9534F),
+                      bgColor: const Color(0xFFFFF0F0),
+                      title: 'Nên kiêng',
+                      items: avoidList,
+                    ),
+                  ],
+
+                  // Nhóm: Khi nào đi khám
+                  if (whenToSeeDoc != null && whenToSeeDoc.isNotEmpty) ...[
+                    const SizedBox(height: 10),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF28A745).withValues(alpha: 0.08),
+                        color: const Color(0xFFFFF3CD),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Column(
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.tips_and_updates, size: 16, color: Color(0xFF28A745)),
-                              SizedBox(width: 6),
-                              Text(
-                                'Lời khuyên',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF28A745),
+                          const Icon(Icons.warning_amber_rounded, size: 18, color: Color(0xFFB8860B)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Khi nào cần đi khám ngay',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF856404),
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            message.advice!,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: Color(0xFF2D5A30),
-                              height: 1.5,
+                                const SizedBox(height: 4),
+                                Text(
+                                  whenToSeeDoc,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Color(0xFF856404),
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF3CD),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.warning_amber, size: 16, color: Color(0xFFB8860B)),
-                        SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            'Nếu triệu chứng nặng hơn, hãy đi khám ngay!',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF856404),
-                              fontWeight: FontWeight.w500,
+
+                  // Nút Lưu lời khuyên
+                  if (tips != null) ...[
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          HealthTipsProvider.instance.save(
+                            selfCareTips: tips,
+                            condition: message.advice,
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('✅ Đã lưu lời khuyên vào Nhắc nhở!'),
+                              backgroundColor: Color(0xFF28A745),
+                              duration: Duration(seconds: 2),
+                              behavior: SnackBarBehavior.floating,
                             ),
+                          );
+                          context.go('/prescriptions');
+                        },
+                        icon: const Icon(Icons.bookmark_add_outlined, size: 18),
+                        label: const Text('Lưu lời khuyên & xem Nhắc nhở'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF28A745),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                      ],
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -750,6 +802,66 @@ class _SymptomScreenState extends State<SymptomScreen> {
       ),
     );
   }
+
+  // Helper: nhóm tips với icon + danh sách
+  Widget _buildTipGroup({
+    required IconData icon,
+    required Color color,
+    required Color bgColor,
+    required String title,
+    required List<String> items,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...items.map((item) => Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.fiber_manual_record, size: 8, color: color),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    item,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: color.withValues(alpha: 0.85),
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )),
+        ],
+      ),
+    );
+  }
+
+
 
   // ── Recording Indicator ─────────────────────────
   Widget _buildRecordingIndicator() {

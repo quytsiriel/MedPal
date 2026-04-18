@@ -17,7 +17,8 @@ class ChatResponse(BaseModel):
     emergency: Optional[bool] = False
     stage: str  # "collecting" | "clarifying" | "complete_visit" | "complete_no_visit"
     decision: Optional[str] = None  # "visit" | "no_visit"
-    advice: Optional[str] = None  # Lời khuyên khi no_visit
+    advice: Optional[str] = None  # Lời khuyên tóm tắt khi no_visit
+    self_care_tips: Optional[Dict] = None  # Lời khuyên chi tiết: {avoid:[...], do:[...], when_to_see_doctor:"..."}
     record: Optional[Dict] = None  # Hồ sơ JSON khi complete
     recommended_dept: Optional[str] = None  # Khoa đề nghị khi visit
     transcript: Optional[str] = None  # Transcript từ voice input (STT)

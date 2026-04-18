@@ -361,7 +361,7 @@ QUY TẮC loi_khuyen_suc_khoe: Chỉ giữ nội dung về nghỉ ngơi, uống 
 def decide_visit(record_json: dict, history: list) -> dict:
     """
     Brain 1: Quyết định bệnh nhân có nên đi khám hay không.
-    Returns: { "decision": "visit"|"no_visit", "reason": "...", "department": "...", "advice": "..." }
+    Returns: { "decision": "visit"|"no_visit", "reason": "...", "department": "...", "advice": "...", "self_care_tips": {...} }
     """
     conversation_text = "\n".join(
         f"{'Bệnh nhân' if m['role'] == 'user' else 'Trợ lý'}: {m['content']}" 
@@ -380,8 +380,23 @@ QUY TẮC:
 - NÊN ĐI KHÁM nếu có BẤT KỲ dấu hiệu: triệu chứng kéo dài >7 ngày, đau dữ dội, sốt cao >3 ngày, triệu chứng thần kinh, khó thở, có bệnh nền, ảnh hưởng nghiêm trọng sinh hoạt
 - KHÔNG CẦN ĐI KHÁM nếu TẤT CẢ: triệu chứng nhẹ <3 ngày, không sốt/sốt nhẹ, sinh hoạt bình thường, không bệnh nền, triệu chứng phổ biến tự giới hạn
 
-Trả về JSON duy nhất:
-{{"decision": "visit hoặc no_visit", "reason": "lý do ngắn gọn", "department": "tên khoa nếu visit, rỗng nếu no_visit", "advice": "lời khuyên chi tiết nếu no_visit: gồm kiêng gì, cần làm gì, khi nào cần đi khám ngay. TUYỆT ĐỐI KHÔNG đề cập thuốc. Rỗng nếu visit"}}"""
+Nếu quyết định là "no_visit", hãy tạo self_care_tips chi tiết, cụ thể cho BệNH NÀY (không chung chung).
+Ví dụ nếu bị ho: avoid gồm "Uống đồ lạnh và đá", "Ăn đồ chiên xào nhiều dầu mỡ"...
+TUYỆT ĐỐI KHÔNG đề cập thuốc trong bất kỳ trường nào.
+
+Trả về JSON duy nhất (không giải thích thêm):
+{{
+  "decision": "visit hoặc no_visit",
+  "reason": "lý do ngắn gọn",
+  "department": "tên khoa nếu visit, rỗng nếu no_visit",
+  "advice": "tóm tắt lời khuyên 1-2 câu nếu no_visit, rỗng nếu visit",
+  "self_care_tips": {{
+    "avoid": ["Điều nên kiêng 1", "Điều nên kiêng 2", "Điều nên kiêng 3"],
+    "do": ["Nên làm 1", "Nên làm 2", "Nên làm 3"],
+    "when_to_see_doctor": "Mô tả dấu hiệu cụ thể khi nào cần đi khám ngay"
+  }}
+}}
+Nếu quyết định là "visit", để self_care_tips là null."""
     
     try:
         response = create_brain1_client().chat.completions.create(
@@ -393,16 +408,21 @@ Trả về JSON duy nhất:
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
             result = json.loads(match.group())
-            # Validate advice
+            # Validate advice (không chứa thuốc)
             if result.get("advice"):
                 result["advice"] = validate_advice(result["advice"])
+            # Validate self_care_tips items
+            if result.get("self_care_tips"):
+                tips = result["self_care_tips"]
+                tips["avoid"] = [validate_advice(x) or x for x in tips.get("avoid", []) if x]
+                tips["do"] = [validate_advice(x) or x for x in tips.get("do", []) if x]
             return result
     except Exception as e:
         print(f"[WARN] Brain 1 decide_visit failed: {e}")
     
-    # Fallback: an toàn → khuyên đi khám
+    # Fallback: an toàn → khuyen đi khám
     dept = record_json.get("khoa_de_nghi", {}).get("khoa_chinh", "Đa khoa")
-    return {"decision": "visit", "reason": "Không thể đánh giá tự động", "department": dept, "advice": ""}
+    return {"decision": "visit", "reason": "Không thể đánh giá tự động", "department": dept, "advice": "", "self_care_tips": None}
 
 # ── Session Management ─────────────────────────────
 def create_session(user_id: str) -> str:
@@ -576,6 +596,7 @@ def chat_with_agent1(request: ChatRequest):
         dept = visit_decision.get("department", record_json.get("khoa_de_nghi", {}).get("khoa_chinh", "Đa khoa"))
         advice = visit_decision.get("advice", "")
         reason = visit_decision.get("reason", "")
+        self_care_tips = visit_decision.get("self_care_tips", None)
         
         if decision == "visit":
             reply_msg = (
@@ -607,7 +628,8 @@ def chat_with_agent1(request: ChatRequest):
             "decision": decision,
             "recommended_dept": dept if decision == "visit" else None,
             "record": record_json,
-            "advice": advice if decision == "no_visit" else None
+            "advice": advice if decision == "no_visit" else None,
+            "self_care_tips": self_care_tips if decision == "no_visit" else None
         })
         
         return ChatResponse(
@@ -616,6 +638,7 @@ def chat_with_agent1(request: ChatRequest):
             stage=stage,
             decision=decision,
             advice=advice if decision == "no_visit" else None,
+            self_care_tips=self_care_tips if decision == "no_visit" else None,
             record=record_json,
             recommended_dept=dept if decision == "visit" else None,
             transcript=transcript
