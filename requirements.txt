@@ -1,0 +1,12 @@
+fastapi==0.111.0
+uvicorn==0.29.0
+openai
+firebase-admin>=7.4.0
+google-generativeai==0.5.4
+python-dotenv==1.0.1
+httpx>=0.27.0
+apscheduler
+python-multipart
+sentence-transformers
+faiss-cpu
+numpy

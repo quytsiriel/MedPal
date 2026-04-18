@@ -1,0 +1,43 @@
+# ===========================
+# Secrets & Environment
+# ===========================
+.env
+/secrets/
+serviceAccountKey.json
+*.pem
+*.key
+
+# ===========================
+# Python Backend
+# ===========================
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+dist/
+*.log
+
+# ===========================
+# Flutter / Dart Frontend
+# ===========================
+build/
+.dart_tool/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
+
+# ===========================
+# IDE & OS
+# ===========================
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+chrome-device/
+Default/
+Local Storage/
+Session Storage/

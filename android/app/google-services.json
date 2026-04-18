@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "860583524648",
+    "project_id": "medpal-gdgoc",
+    "storage_bucket": "medpal-gdgoc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:860583524648:android:1f5e259b6705adff7b381d",
+        "android_client_info": {
+          "package_name": "com.example.medpal"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCeNhMhGN7MJQWUUHoxxJcnDXNnedyAJuQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
