@@ -45,6 +45,7 @@ final appRouter = GoRouter(
                 targetHospital: extra?['hospital'] as Hospital?,
                 userLat: extra?['userLat'] as double?,
                 userLng: extra?['userLng'] as double?,
+                targetDepartment: extra?['department'] as String?,
               ),
             );
           },

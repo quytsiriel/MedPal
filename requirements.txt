@@ -9,5 +9,4 @@ apscheduler
 python-multipart
 sentence-transformers
 faiss-cpu
-pydantic
 numpy

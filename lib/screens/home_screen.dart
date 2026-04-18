@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +7,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../services/api_service.dart';
 import '../services/map_service.dart';
+import 'package:record/record.dart';
+import '../services/audio_reader.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -20,7 +23,14 @@ class _HomeScreenState extends State<HomeScreen> {
   String _currentReply = "MedPal đang chuẩn bị...";
   VoidCallback? _onReplyFinishedAction;
   String? _currentSessionId;
+  String? _recommendedDept;
   final TextEditingController _typeController = TextEditingController();
+  
+  // Voice Recording state
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _isRecording = false;
+  Duration _recordDuration = Duration.zero;
+  Timer? _recordTimer;
 
   @override
   void dispose() {
@@ -55,10 +65,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // 2. Logic gửi tin nhắn thật qua API Gemini
-  void _sendMessage(String text) async {
-    if (text.trim().isEmpty || _currentSessionId == null) return;
+  void _sendMessage(String? text, {String? voiceBase64}) async {
+    if ((text == null || text.trim().isEmpty) && voiceBase64 == null) return;
+    if (_currentSessionId == null) return;
 
-    final inputLower = text.toLowerCase();
+    final inputLower = text?.toLowerCase() ?? "";
 
     // Keyword routing sang các phần khác
     if (inputLower.contains("đơn thuốc")) {
@@ -79,6 +90,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final response = await apiService.chatSymptom(
         sessionId: _currentSessionId!,
         message: text,
+        voiceBase64: voiceBase64,
       );
 
       if (!mounted) return;
@@ -94,8 +106,21 @@ class _HomeScreenState extends State<HomeScreen> {
         _onReplyFinishedAction = _showSeverityConfirmDialog;
       }
       // Nếu Gemini nhận thấy đã thu thập đủ -> Đề xuất bệnh viện
-      else if (response['stage'] == 'completed') {
-        _onReplyFinishedAction = _fetchAndShowHospitals; // Using HEAD's robust location-based hospital fetch
+      else if (response['stage'] == 'completed' || response['stage'] == 'complete_visit') {
+        _recommendedDept = response['recommended_dept'];
+        _onReplyFinishedAction = _fetchAndShowHospitals; 
+      }
+
+      // Voice transcript feedback
+      final transcript = response['transcript'] as String?;
+      if (transcript != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Bạn nói: "$transcript"'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: const Color(0xFF006A71),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -308,6 +333,87 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ── Voice Recording Methods ─────────────────────
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      await _stopRecordingAndSend();
+    } else {
+      await _startRecording();
+    }
+  }
+
+  Future<void> _startRecording() async {
+    try {
+      if (await _audioRecorder.hasPermission()) {
+        final filePath = await createRecordingPath();
+        final config = const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        );
+        await _audioRecorder.start(config, path: filePath);
+        setState(() {
+          _isRecording = true;
+          _isHeartPressed = true;
+          _recordDuration = Duration.zero;
+          _currentReply = '🎤 Đang ghi âm... Nhấn lại trái tim để gửi.';
+        });
+        _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (mounted) {
+            final m = _recordDuration.inMinutes.remainder(60).toString().padLeft(2, '0');
+            final s = _recordDuration.inSeconds.remainder(60).toString().padLeft(2, '0');
+            setState(() {
+              _recordDuration += const Duration(seconds: 1);
+              _currentReply = '🎤 Đang ghi âm... $m:$s\nNhấn lại trái tim để gửi.';
+            });
+          }
+        });
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cần cấp quyền microphone để ghi âm.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _currentReply = 'Lỗi ghi âm: $e');
+      }
+    }
+  }
+
+  Future<void> _stopRecordingAndSend() async {
+    _recordTimer?.cancel();
+    final path = await _audioRecorder.stop();
+    setState(() {
+      _isRecording = false;
+      _isHeartPressed = false;
+      _recordDuration = Duration.zero;
+    });
+
+    if (path == null || _currentSessionId == null) return;
+
+    setState(() {
+      _isLoading = true;
+      _currentReply = '🎤 Đang nhận dạng giọng nói...';
+    });
+
+    try {
+      final bytes = await readRecordedAudio(path);
+      final base64Audio = base64Encode(bytes);
+
+      _sendMessage(null, voiceBase64: base64Audio);
+
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _currentReply = 'Lỗi nhận dạng giọng nói: $e';
+        });
+      }
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Hospital flow
   // ─────────────────────────────────────────────────────────────────────────
@@ -440,12 +546,36 @@ class _HomeScreenState extends State<HomeScreen> {
     required double userLng,
   }) {
     return GestureDetector(
-      onTap: () {
+      onTap: () async {
         Navigator.pop(ctx);
+        
+        Hospital finalHospital = hospital;
+        
+        // MVP: Nếu là Bệnh viện E và có chuyên khoa đề xuất
+        if (hospital.name.contains("Bệnh viện E") && _recommendedDept != null) {
+          try {
+            final buildingData = await apiService.getBuildingCoords(_recommendedDept!);
+            if (buildingData.containsKey('lat') && buildingData.containsKey('lng')) {
+              finalHospital = Hospital(
+                name: "${hospital.name} - ${buildingData['building_name']}",
+                address: hospital.address,
+                openStatus: hospital.openStatus,
+                lat: buildingData['lat'],
+                lng: buildingData['lng'],
+                photoUrl: hospital.photoUrl,
+              );
+            }
+          } catch (e) {
+            print("Lỗi khi lấy tọa độ tòa nhà: $e");
+          }
+        }
+
+        if (!mounted) return;
         context.go('/navigation', extra: {
-          'hospital': hospital,
+          'hospital': finalHospital,
           'userLat': userLat,
           'userLng': userLng,
+          'department': _recommendedDept,
         });
       },
       child: Container(
@@ -571,77 +701,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-<<<<<<< HEAD
     );
   }
-
-=======
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 0,
-        type: BottomNavigationBarType
-            .fixed, // Giữ fixed để phòng hờ sau này teammate có thêm nút thứ 4, thứ 5
-        selectedItemColor: const Color(0xFF006B70),
-        unselectedItemColor: Colors.grey,
-        onTap: (index) {
-          switch (index) {
-            case 0:
-              context.go('/'); // Trang hiện tại (Symptoms)
-              break;
-            case 1:
-              context.go('/navigation'); // Agent 2
-              break;
-            case 2:
-              context.go('/prescriptions'); // Agent 3
-              break;
-            // TODO (Teammate): Mở rộng logic chuyển trang (case 3, case 4...) cho Agent mới ở đây
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.medical_services_rounded),
-            label: 'Khám bệnh',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.navigation_rounded),
-            label: 'Chỉ đường',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.receipt_long_rounded),
-            label: 'Đơn thuốc',
-          ),
-          // TODO (Teammate): Khi có Agent mới, copy BottomNavigationBarItem và dán vào dưới dòng này
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCustomHeader(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-      child: Row(
-        children: [
-          const Text(
-            'MedPal',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF006B70),
-            ),
-          ),
-          const Spacer(),
-          IconButton(
-            icon: const Icon(
-              Icons.settings_rounded,
-              size: 30,
-              color: Color(0xFF006B70),
-            ),
-            onPressed: () {},
-          ),
-        ],
-      ),
-    );
-  }
->>>>>>> origin/BackEnd-UI-Agent1
 
   Widget _buildSpeechBubble(BuildContext context) {
     return Padding(
@@ -670,13 +731,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       width: 24,
                       height: 24,
                       child: CircularProgressIndicator(
-<<<<<<< HEAD
-                          strokeWidth: 3, color: Color(0xFF006A71)),
-=======
                         strokeWidth: 3,
                         color: Color(0xFF006A71),
                       ),
->>>>>>> origin/BackEnd-UI-Agent1
                     ),
                   ),
                 )
@@ -738,16 +795,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Positioned(
           bottom: heartBottomOffset, // Vị trí trái tim lên xuống
           child: GestureDetector(
-            onTapDown: (_) {
-              setState(() => _isHeartPressed = true);
-              // Proactively request GPS permission here
-              mapService.getCurrentLocation();
-            },
-            onTapUp: (_) {
-              setState(() => _isHeartPressed = false);
-              _sendMessage("Giả lập thu âm...");
-            },
-            onTapCancel: () => setState(() => _isHeartPressed = false),
+            onTap: _isLoading ? null : _toggleRecording,
             child: SizedBox(
               width: heartWidth,
               height: heartHeight,

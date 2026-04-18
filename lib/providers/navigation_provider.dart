@@ -10,6 +10,7 @@ class NavigationState {
   final bool isLoading;
   final double? lat;
   final double? lng;
+  final String? targetDepartment;
 
   NavigationState({
     this.currentHospital,
@@ -19,6 +20,7 @@ class NavigationState {
     this.isLoading = false,
     this.lat,
     this.lng,
+    this.targetDepartment,
   });
 
   NavigationState copyWith({
@@ -29,6 +31,7 @@ class NavigationState {
     bool? isLoading,
     double? lat,
     double? lng,
+    String? targetDepartment,
   }) {
     return NavigationState(
       currentHospital: currentHospital ?? this.currentHospital,
@@ -38,6 +41,7 @@ class NavigationState {
       isLoading: isLoading ?? this.isLoading,
       lat: lat ?? this.lat,
       lng: lng ?? this.lng,
+      targetDepartment: targetDepartment ?? this.targetDepartment,
     );
   }
 }
@@ -48,13 +52,14 @@ class NavigationNotifier extends Notifier<NavigationState> {
     return NavigationState();
   }
 
-  void setHospital(Hospital hospital, double? hospitalLat, double? hospitalLng) {
+  void setHospital(Hospital hospital, double? hospitalLat, double? hospitalLng, {String? targetDepartment}) {
     state = state.copyWith(
       currentHospital: hospital,
       lat: hospitalLat,
       lng: hospitalLng,
       hasArrived: false,
       indoorSteps: [],
+      targetDepartment: targetDepartment,
     );
     if (hospitalLat != null && hospitalLng != null) {
       updateAddress(hospitalLat, hospitalLng);
@@ -78,11 +83,19 @@ class NavigationNotifier extends Notifier<NavigationState> {
     if (state.currentHospital == null) return;
     state = state.copyWith(isLoading: true);
     try {
-      final res = await apiService.navigate("session-id", state.currentHospital!.name);
-      state = state.copyWith(
-        indoorSteps: List<String>.from(res['steps'] ?? []),
-        isLoading: false,
-      );
+      if (state.targetDepartment != null && state.targetDepartment!.isNotEmpty) {
+        final res = await apiService.updateDepartment("session-id", state.targetDepartment!);
+        state = state.copyWith(
+          indoorSteps: List<String>.from(res['next_steps'] ?? []),
+          isLoading: false,
+        );
+      } else {
+        final res = await apiService.navigate("session-id", state.currentHospital!.name);
+        state = state.copyWith(
+          indoorSteps: List<String>.from(res['steps'] ?? []),
+          isLoading: false,
+        );
+      }
     } catch (e) {
       state = state.copyWith(isLoading: false);
     }

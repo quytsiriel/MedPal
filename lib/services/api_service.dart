@@ -6,66 +6,69 @@ import 'map_service.dart';
 class ApiService {
   static String get baseUrl {
     if (kIsWeb) {
-      return 'http://127.0.0.1:8000';
+      // Browsers prefer 'localhost' for local development CORS
+      return 'http://localhost:8000';
     }
     if (defaultTargetPlatform == TargetPlatform.android) {
+      // 10.0.2.2 is the special alias for the host machine in Android Emulator
       return 'http://10.0.2.2:8000';
     }
-    return 'http://127.0.0.1:8000';
+    // Fallback for iOS simulator or other desktop platforms
+    return 'http://localhost:8000';
   }
 
   // ==========================================
   // AGENT 1: SYMPTOM COLLECTION
   // ==========================================
 
+  /// [POST] /agent1/start
+  /// Khởi tạo một session khám bệnh mới.
   Future<Map<String, dynamic>> startSession() async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/agent1/start'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({}),
-      ).timeout(const Duration(seconds: 10));
-      
-      if (response.statusCode == 200) {
-        return jsonDecode(utf8.decode(response.bodyBytes));
-      }
-    } catch (e) {
-      print('ApiService Error (startSession): $e');
+    final response = await http.post(
+      Uri.parse('$baseUrl/agent1/start'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({}), // Gửi body trống
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
     }
-
-    // Fallback if backend is not reachable
-    return {
-      "session_id": "temp-session",
-      "message": "Chào bạn, tôi là bác sĩ trợ lý MedPal. Hiện tại tôi đang mất kết nối với máy chủ, nhưng bạn vẫn có thể mô tả triệu chứng.",
-      "stage": "init"
-    };
+    throw Exception('Failed to start session: ${response.statusCode}');
   }
 
+  /// [POST] /agent1/chat
+  /// Gửi tin nhắn (text hoặc voice) trong luồng chẩn đoán
   Future<Map<String, dynamic>> chatSymptom({
     required String sessionId,
     String? message,
     String? voiceBase64,
   }) async {
+    if (message == null && voiceBase64 == null) {
+      throw Exception('Missing both message and voice_base64');
+    }
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/agent1/chat'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        "session_id": sessionId,
+        if (message != null) "message": message,
+        if (voiceBase64 != null) "voice_base64": voiceBase64,
+      })
+    );
+    
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    }
+    
+    // Trích xuất detail từ backend error response
+    String detail = '';
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/agent1/chat'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "session_id": sessionId,
-          if (message != null) "message": message,
-          if (voiceBase64 != null) "voice_base64": voiceBase64,
-        }),
-      ).timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(utf8.decode(response.bodyBytes));
-      }
-    } catch (_) {}
-
-    return {
-      "reply": "Dạ vâng, tôi đã ghi nhận. Xin mời bạn nói thêm...",
-      "stage": "collecting"
-    };
+      final errorBody = jsonDecode(utf8.decode(response.bodyBytes));
+      detail = errorBody['detail'] ?? response.body;
+    } catch (_) {
+      detail = response.body;
+    }
+    throw Exception('Chat failed (${response.statusCode}): $detail');
   }
 
   // ==========================================
@@ -163,6 +166,21 @@ class ApiService {
       print('ApiService Error (reverseGeocode): $e');
     }
     return "Không xác định được vị trí";
+  }
+
+  Future<Map<String, dynamic>> getBuildingCoords(String department) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/agent2/building-coords?department=${Uri.encodeComponent(department)}'),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(utf8.decode(response.bodyBytes));
+      }
+    } catch (e) {
+      print('ApiService Error (getBuildingCoords): $e');
+    }
+    return {};
   }
 
   // ==========================================

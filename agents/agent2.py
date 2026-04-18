@@ -40,9 +40,27 @@ class UpdateDeptResponse(BaseModel):
     status: str
     next_steps: List[str]
 
-# --- Helpers ---
+import json
+
+# --- Helpers & Mocks ---
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "AIzaSyAnzgVLFFHAIF-mS8sHWI_kAKNJo4btE98")
+
+# Load Hospital E Mock Data
+MOCK_DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "mock_data", "hospital_e.json")
+try:
+    with open(MOCK_DATA_PATH, "r", encoding="utf-8") as f:
+        HOSPITAL_E_DATA = json.load(f)
+        MOCK_BUILDINGS = HOSPITAL_E_DATA["buildings"]
+        MOCK_MAPPING = HOSPITAL_E_DATA["mapping"]
+        HOSPITAL_E_NAME = HOSPITAL_E_DATA.get("name", "Bệnh viện E")
+        HOSPITAL_E_ADDR = HOSPITAL_E_DATA.get("address", "89 Trần Cung, Nghĩa Tân, Cầu Giấy, Hà Nội")
+except Exception as e:
+    print(f"Error loading mock data: {e}")
+    MOCK_BUILDINGS = {}
+    MOCK_MAPPING = []
+    HOSPITAL_E_NAME = "Bệnh viện E"
+    HOSPITAL_E_ADDR = "89 Trần Cung, Nghĩa Tân, Cầu Giấy, Hà Nội"
 
 # --- Endpoints ---
 
@@ -73,6 +91,16 @@ async def get_hospitals(req: HospitalRequest):
 
         results = data.get("results", [])[:5]  # Take top 5
         hospitals = []
+        
+        # --- MOCK BỆNH VIỆN E MVP ---
+        hospitals.append(HospitalResponse(
+            name=HOSPITAL_E_NAME,
+            address=HOSPITAL_E_ADDR,
+            open_status="Mở cửa 24/7",
+            lat=MOCK_BUILDINGS["Tòa E"]["lat"],
+            lng=MOCK_BUILDINGS["Tòa E"]["lng"],
+            photo_url=None
+        ))
 
         for p in results:
             geo = p.get("geometry", {}).get("location", {})
@@ -111,17 +139,57 @@ async def navigate(req: NavigateRequest):
             "Rẽ trái ở quầy lễ tân A",
             "Lên thang máy số 3 tới phòng 204"
         ],
-        "map_image_url": "https://api.medpal-backend.xyz/static/maps/default.png"
+        "map_image_url": f"{BASE_URL}/static/maps/default.png"
     }
 
 @router.post("/update-dept", response_model=UpdateDeptResponse)
 async def update_dept(req: UpdateDeptRequest):
+    # Match department in Mock DB
+    for item in MOCK_MAPPING:
+        if req.department.lower() in item["khoa"].lower() or item["khoa"].lower() in req.department.lower():
+            toa_name = item["toa"]
+            tang = item["tang"]
+            room = item.get("phong")
+            
+            steps = [
+                f"Di chuyển đến {toa_name}",
+                f"Sử dụng thang máy hoặc thang bộ lên Tầng {tang}",
+                f"Tìm biển báo hướng dẫn đến {item['khoa']}{f' (Phòng {room})' if room else ''} tại Tầng {tang}"
+            ]
+            
+            return {
+                "status": "updated",
+                "next_steps": steps
+            }
+
     return {
         "status": "updated",
         "next_steps": [
-            f"Đi dọc hành lang đến khoa {req.department}",
+            f"Đi dọc hành lang đến {req.department}",
             "Rẽ phải tại biển báo chỉ dẫn",
             "Phòng khám ở cuối dãy"
+        ]
+    }
+
+@router.get("/building-coords")
+async def get_building_coords(department: str):
+    for item in MOCK_MAPPING:
+        if department.lower() in item["khoa"].lower() or item["khoa"].lower() in department.lower():
+            toa_name = item["toa"]
+            if toa_name in MOCK_BUILDINGS:
+                return {
+                    "department": item["khoa"],
+                    "building_name": toa_name,
+                    "lat": MOCK_BUILDINGS[toa_name]["lat"],
+                    "lng": MOCK_BUILDINGS[toa_name]["lng"]
+                }
+    
+    # Defaults to Tòa E if not found
+    return {
+        "department": department,
+        "building_name": "Tòa E",
+        "lat": MOCK_BUILDINGS["Tòa E"]["lat"],
+        "lng": MOCK_BUILDINGS["Tòa E"]["lng"]
     }
 
 @router.get("/geocoding")

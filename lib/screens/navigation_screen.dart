@@ -11,12 +11,14 @@ class NavigationScreen extends ConsumerStatefulWidget {
   final Hospital? targetHospital;
   final double? userLat;
   final double? userLng;
+  final String? targetDepartment;
 
   const NavigationScreen({
     super.key,
     this.targetHospital,
     this.userLat,
     this.userLng,
+    this.targetDepartment,
   });
 
   @override
@@ -32,7 +34,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         ref.read(navigationProvider.notifier).setHospital(
           widget.targetHospital!, 
           widget.userLat, 
-          widget.userLng
+          widget.userLng,
+          targetDepartment: widget.targetDepartment,
         );
       }
     });
@@ -214,7 +217,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                     const SizedBox(width: 16),
                     Expanded(
                       child: Text(
-                        "Cơ sở y tế hướng đến:\n${navState.currentHospital?.name}",
+                        "Cơ sở y tế:\n${navState.currentHospital?.name}${navState.targetDepartment != null ? '\nKhoa mục tiêu: ${navState.targetDepartment}' : ''}",
                         style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Color(0xFF006A71)),
                       ),
                     ),
