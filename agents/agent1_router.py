@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastapi import APIRouter, HTTPException, Depends, Header
 from models.schemas import StartResponse, ChatRequest, ChatResponse
 import uuid
@@ -683,3 +687,7 @@ def chat_with_agent1(request: ChatRequest):
     })
     
     return ChatResponse(reply=ai_reply, emergency=False, stage="collecting", transcript=transcript)
+
+if __name__ == "__main__":
+    print("✅ Module agents.agent1_router loaded successfully!")
+    print("💡 To run the API server, please use the command: python -m uvicorn main:app --reload")
