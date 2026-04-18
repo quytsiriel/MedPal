@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'router/app_router.dart';
+import 'services/map_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Pre-emptively request location permissions to improve UX
+  mapService.getCurrentLocation();
+
   runApp(
     // Wrap app with ProviderScope cho Riverpod (nếu sau này dùng Riverpod)
     const ProviderScope(

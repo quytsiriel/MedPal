@@ -57,8 +57,14 @@ class MapService {
       return (lat: position.latitude, lng: position.longitude);
     } catch (e) {
       debugPrint('[MapService] Fresh fix failed: $e');
-      final last = await Geolocator.getLastKnownPosition();
-      if (last != null) return (lat: last.latitude, lng: last.longitude);
+      if (!kIsWeb) {
+        try {
+          final last = await Geolocator.getLastKnownPosition();
+          if (last != null) return (lat: last.latitude, lng: last.longitude);
+        } catch (e2) {
+          debugPrint('[MapService] getLastKnownPosition failed: $e2');
+        }
+      }
     }
     
     return null;

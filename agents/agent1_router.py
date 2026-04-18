@@ -711,6 +711,16 @@ def chat_with_agent1(request: ChatRequest):
     
     return ChatResponse(reply=ai_reply, emergency=False, stage="collecting", transcript=transcript)
 
+@router.post("/transcribe")
+def transcribe_only(request: ChatRequest):
+    if not request.voice_base64:
+        raise HTTPException(status_code=400, detail="Missing voice_base64")
+    try:
+        transcript = transcribe_audio_base64(request.voice_base64)
+        return {"transcript": transcript}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     print("✅ Module agents.agent1_router loaded successfully!")
     print("💡 To run the API server, please use the command: python -m uvicorn main:app --reload")

@@ -3,6 +3,9 @@ from pydantic import BaseModel
 from typing import List, Optional
 import httpx
 import os
+import json
+import difflib
+import re
 
 # Production Domain from Git Repo: https://api.medpal-backend.xyz
 BASE_URL = os.getenv("BASE_URL", "https://api.medpal-backend.xyz")
@@ -173,6 +176,7 @@ async def update_dept(req: UpdateDeptRequest):
 
 @router.get("/building-coords")
 async def get_building_coords(department: str):
+    # 1. Try exact or substring match first
     for item in MOCK_MAPPING:
         if department.lower() in item["khoa"].lower() or item["khoa"].lower() in department.lower():
             toa_name = item["toa"]
@@ -184,13 +188,47 @@ async def get_building_coords(department: str):
                     "lng": MOCK_BUILDINGS[toa_name]["lng"]
                 }
     
-    # Defaults to Tòa E if not found
-    return {
-        "department": department,
-        "building_name": "Tòa E",
-        "lat": MOCK_BUILDINGS["Tòa E"]["lat"],
-        "lng": MOCK_BUILDINGS["Tòa E"]["lng"]
-    }
+    # 2. Try fuzzy matching using difflib
+    dept_names = [item["khoa"] for item in MOCK_MAPPING]
+    matches = difflib.get_close_matches(department, dept_names, n=1, cutoff=0.4)
+    if matches:
+        best_name = matches[0]
+        for item in MOCK_MAPPING:
+            if item["khoa"] == best_name:
+                toa_name = item["toa"]
+                return {
+                    "department": item["khoa"],
+                    "building_name": toa_name,
+                    "lat": MOCK_BUILDINGS[toa_name]["lat"],
+                    "lng": MOCK_BUILDINGS[toa_name]["lng"]
+                }
+
+    # 3. Try token-based keyword matching (good for verbose voice input)
+    stop_words = {'khoa', 'phòng', 'bệnh', 'viện', 'tôi', 'bác', 'sĩ', 'với', 'cần', 'đến', 'sang', 'bảo', 'là', 'vào', 'ở', 'tại', 'của'}
+    input_tokens = {t for t in re.findall(r'\w+', department.lower()) if t not in stop_words}
+    best_item = None
+    max_overlap = 0
+    for item in MOCK_MAPPING:
+        dept_tokens = {t for t in re.findall(r'\w+', item["khoa"].lower()) if t not in stop_words}
+        overlap = len(input_tokens.intersection(dept_tokens))
+        if overlap > max_overlap:
+            max_overlap = overlap
+            best_item = item
+            
+    # Require significant overlap (at least 60% of the input tokens must match meaningful dept tokens)
+    if best_item and len(input_tokens) > 0:
+        match_ratio = max_overlap / len(input_tokens)
+        if match_ratio >= 0.6 or max_overlap >= 2:
+            toa_name = best_item["toa"]
+            return {
+                "department": best_item["khoa"],
+                "building_name": toa_name,
+                "lat": MOCK_BUILDINGS[toa_name]["lat"],
+                "lng": MOCK_BUILDINGS[toa_name]["lng"]
+            }
+
+    # If no match found, don't default to Tòa E anymore - return 404
+    raise HTTPException(status_code=404, detail="Không tìm thấy khoa bạn cần.")
 
 @router.get("/geocoding")
 async def reverse_geocode(lat: float, lng: float):

@@ -4,26 +4,30 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:record/record.dart';
 
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
 import '../services/audio_reader.dart';
-import '../services/health_tips_provider.dart';
+import '../services/map_service.dart';
+import '../providers/navigation_provider.dart';
 
-class SymptomScreen extends StatefulWidget {
+class SymptomScreen extends ConsumerStatefulWidget {
   const SymptomScreen({super.key});
 
   @override
-  State<SymptomScreen> createState() => _SymptomScreenState();
+  ConsumerState<SymptomScreen> createState() => _SymptomScreenState();
 }
 
-class _SymptomScreenState extends State<SymptomScreen> {
+class _SymptomScreenState extends ConsumerState<SymptomScreen> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
+  List<Hospital> _nearbyHospitals = []; // State for dynamic hospitals
+
   bool _isInit = true; // Trạng thái đang bốc sessionId ở lần đầu mở
   bool _isCompleted = false; // Phiên đã kết thúc
   String? _currentSessionId;
@@ -39,6 +43,8 @@ class _SymptomScreenState extends State<SymptomScreen> {
     super.initState();
     _startConversation();
   }
+
+ // Removed didChangeDependencies
 
   @override
   void dispose() {
@@ -96,6 +102,10 @@ class _SymptomScreenState extends State<SymptomScreen> {
     });
     _scrollToBottom();
 
+    if (text.toLowerCase().contains("bệnh viện")) {
+      _showHospitalRecommendationsDialog();
+    }
+
     try {
       final response = await apiService.chatSymptom(
         sessionId: _currentSessionId!,
@@ -111,12 +121,79 @@ class _SymptomScreenState extends State<SymptomScreen> {
               timestamp: DateTime.now(),
             ),
           );
-        });
+          _isLoading = false;
+       });
     } finally {
       setState(() {
         _isLoading = false;
       });
       _scrollToBottom();
+    }
+  }
+
+  // --- Follow-up Logic for new department routing ---
+  Future<void> _handleFollowUpResponse(String userText) async {
+    setState(() => _isLoading = true);
+    final userLower = userText.toLowerCase();
+
+    if (userLower.contains("không") || userLower.contains("no") || userLower.contains("chưa")) {
+      setState(() {
+        _messages.add(ChatMessage(
+          text: "Chúc bạn khám bệnh thuận lợi!",
+          isUser: false,
+          timestamp: DateTime.now(),
+        ));
+        _isLoading = false;
+      });
+      return;
+    }
+
+    // Attempt to match department
+    try {
+      final buildingData = await apiService.getBuildingCoords(userText);
+      if (buildingData.isNotEmpty && buildingData['building_name'] != null) {
+        final String dept = buildingData['department'] ?? userText;
+        
+        setState(() {
+          _messages.add(ChatMessage(
+            text: "Đã tìm thấy $dept tại ${buildingData['building_name']}. Đang chuyển hướng...",
+            isUser: false,
+            timestamp: DateTime.now(),
+          ));
+        });
+
+        await Future.delayed(const Duration(seconds: 2));
+
+        // Update Navigation Provider
+        final currentHospital = ref.read(navigationProvider).currentHospital;
+        if (currentHospital != null) {
+          final updatedHospital = Hospital(
+            name: currentHospital.name,
+            address: '${buildingData['building_name']}, ${currentHospital.address.split(',').skip(1).join(',')}',
+            openStatus: currentHospital.openStatus,
+            lat: buildingData['lat'],
+            lng: buildingData['lng'],
+            photoUrl: currentHospital.photoUrl,
+          );
+          ref.read(navigationProvider.notifier).setHospital(updatedHospital, null, null, targetDepartment: dept);
+          
+          if (mounted) {
+            context.go('/navigation');
+          }
+        }
+      } else {
+        setState(() {
+          _messages.add(ChatMessage(
+            text: "Hiện tôi chưa tìm thấy khoa này trong dữ liệu sơ đồ của Bệnh viện E. Bạn có thể hỏi quầy lễ tân gần nhất nhé!",
+            isUser: false,
+            timestamp: DateTime.now(),
+          ));
+        });
+      }
+    } catch (e) {
+      print("Follow-up error: $e");
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
@@ -140,6 +217,8 @@ class _SymptomScreenState extends State<SymptomScreen> {
   Future<void> _startRecording() async {
     try {
       if (await _audioRecorder.hasPermission()) {
+        mapService.getCurrentLocation();
+        
         final filePath = await createRecordingPath();
         final config = kIsWeb
             ? const RecordConfig(encoder: AudioEncoder.opus)
@@ -270,12 +349,12 @@ class _SymptomScreenState extends State<SymptomScreen> {
     final advice = response['advice'] as String?;
     final record = response['record'] as Map<String, dynamic>?;
     final recommendedDept = response['recommended_dept'] as String?;
-    final selfCareTips = response['self_care_tips'] as Map<String, dynamic>?;
+    final replyStr = response['reply']?.toString() ?? "Tôi đang phân tích...";
 
     setState(() {
       _messages.add(
         ChatMessage(
-          text: response['reply'] ?? "Tôi đang phân tích...",
+          text: replyStr,
           isUser: false,
           timestamp: DateTime.now(),
           stage: stage,
@@ -283,7 +362,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
           advice: advice,
           record: record,
           recommendedDept: recommendedDept,
-          selfCareTips: selfCareTips,
         ),
       );
 
@@ -292,8 +370,12 @@ class _SymptomScreenState extends State<SymptomScreen> {
         _isCompleted = true;
       }
     });
-  }
 
+    if (stage == 'completed' || stage == 'complete_visit' || 
+        replyStr.toLowerCase().contains("bệnh viện")) {
+      _showHospitalRecommendationsDialog();
+    }
+  }
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -311,13 +393,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FA),
-      appBar: AppBar(
-        title: const Text('Check Symptoms', style: TextStyle(color: Color(0xFF006B70))),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Color(0xFF006B70)),
-      ),
       body: SafeArea(
         child: Column(
           children: [
@@ -595,10 +670,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       onPressed: () {
-                        // TODO: Navigate sang màn hình tìm bệnh viện
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Tính năng tìm bệnh viện đang phát triển.')),
-                        );
+                        _showHospitalRecommendationsDialog();
                       },
                       icon: const Icon(Icons.location_on, size: 18),
                       label: const Text('Tìm bệnh viện gần nhất'),
@@ -623,11 +695,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
 
   // ── Complete No-Visit Card (🏡 Lời khuyên tại nhà) ──
   Widget _buildCompleteNoVisitCard(ChatMessage message) {
-    final tips = message.selfCareTips;
-    final avoidList = (tips?['avoid'] as List?)?.cast<String>() ?? [];
-    final doList = (tips?['do'] as List?)?.cast<String>() ?? [];
-    final whenToSeeDoc = tips?['when_to_see_doctor'] as String?;
-
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8.0),
       child: Row(
@@ -665,7 +732,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header
                   const Row(
                     children: [
                       Icon(Icons.spa, size: 18, color: Color(0xFF28A745)),
@@ -681,8 +747,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
                     ],
                   ),
                   const Divider(height: 16),
-
-                  // Summary text
                   Text(
                     message.text,
                     style: const TextStyle(
@@ -691,109 +755,70 @@ class _SymptomScreenState extends State<SymptomScreen> {
                       height: 1.5,
                     ),
                   ),
-
-                  // Nhóm: Nên làm
-                  if (doList.isNotEmpty) ...[
-                    const SizedBox(height: 14),
-                    _buildTipGroup(
-                      icon: Icons.check_circle_outline,
-                      color: const Color(0xFF28A745),
-                      bgColor: const Color(0xFFEEF9F0),
-                      title: 'Nên làm',
-                      items: doList,
-                    ),
-                  ],
-
-                  // Nhóm: Kiêng
-                  if (avoidList.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    _buildTipGroup(
-                      icon: Icons.do_not_disturb_on_outlined,
-                      color: const Color(0xFFD9534F),
-                      bgColor: const Color(0xFFFFF0F0),
-                      title: 'Nên kiêng',
-                      items: avoidList,
-                    ),
-                  ],
-
-                  // Nhóm: Khi nào đi khám
-                  if (whenToSeeDoc != null && whenToSeeDoc.isNotEmpty) ...[
-                    const SizedBox(height: 10),
+                  if (message.advice != null && message.advice!.isNotEmpty) ...[
+                    const SizedBox(height: 12),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF3CD),
+                        color: const Color(0xFF28A745).withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Row(
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.warning_amber_rounded, size: 18, color: Color(0xFFB8860B)),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Khi nào cần đi khám ngay',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF856404),
-                                  ),
+                          const Row(
+                            children: [
+                              Icon(Icons.tips_and_updates, size: 16, color: Color(0xFF28A745)),
+                              SizedBox(width: 6),
+                              Text(
+                                'Lời khuyên',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF28A745),
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  whenToSeeDoc,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    color: Color(0xFF856404),
-                                    height: 1.4,
-                                  ),
-                                ),
-                              ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            message.advice!,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Color(0xFF2D5A30),
+                              height: 1.5,
                             ),
                           ),
                         ],
                       ),
                     ),
                   ],
-
-                  // Nút Lưu lời khuyên
-                  if (tips != null) ...[
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          HealthTipsProvider.instance.save(
-                            selfCareTips: tips,
-                            condition: message.advice,
-                          );
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('✅ Đã lưu lời khuyên vào Nhắc nhở!'),
-                              backgroundColor: Color(0xFF28A745),
-                              duration: Duration(seconds: 2),
-                              behavior: SnackBarBehavior.floating,
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3CD),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.warning_amber, size: 16, color: Color(0xFFB8860B)),
+                        SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Nếu triệu chứng nặng hơn, hãy đi khám ngay!',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF856404),
+                              fontWeight: FontWeight.w500,
                             ),
-                          );
-                          context.go('/prescriptions');
-                        },
-                        icon: const Icon(Icons.bookmark_add_outlined, size: 18),
-                        label: const Text('Lưu lời khuyên & xem Nhắc nhở'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF28A745),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ],
               ),
             ),
@@ -802,66 +827,6 @@ class _SymptomScreenState extends State<SymptomScreen> {
       ),
     );
   }
-
-  // Helper: nhóm tips với icon + danh sách
-  Widget _buildTipGroup({
-    required IconData icon,
-    required Color color,
-    required Color bgColor,
-    required String title,
-    required List<String> items,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: color),
-              const SizedBox(width: 6),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ...items.map((item) => Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.fiber_manual_record, size: 8, color: color),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    item,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: color.withValues(alpha: 0.85),
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          )),
-        ],
-      ),
-    );
-  }
-
-
 
   // ── Recording Indicator ─────────────────────────
   Widget _buildRecordingIndicator() {
@@ -1030,6 +995,218 @@ class _SymptomScreenState extends State<SymptomScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  void _showHospitalRecommendationsDialog() async {
+    // 1. Fetch real nearby hospitals if not already fetched
+    if (_nearbyHospitals.isEmpty) {
+      final loc = await mapService.getCurrentLocation();
+      if (loc != null) {
+        _nearbyHospitals = await apiService.getNearbyHospitals(loc.lat, loc.lng);
+      }
+    }
+
+    // 2. Prepare the list: Bệnh viện E first, then 2 real nearest
+    List<Hospital> displayList = [];
+    
+    // Hardcode BV E as primary choice for Demo
+    displayList.add(Hospital(
+      name: "Bệnh viện E",
+      address: "89 Trần Cung, Nghĩa Tân, Cầu Giấy, Hà Nội",
+      openStatus: "Đang mở cửa",
+      lat: 21.0463,
+      lng: 105.7865,
+      photoUrl: "assets/benhvien_e.jpg",
+    ));
+
+    // Add up to 2 more from real API results (avoid duplicating BV E if it's there)
+    for (var h in _nearbyHospitals) {
+      if (displayList.length >= 3) break;
+      if (!h.name.contains("Bệnh viện E")) {
+        displayList.add(h);
+      }
+    }
+
+    // Fallback if API results are thin
+    if (displayList.length < 3) {
+      displayList.add(Hospital(
+        name: "Phòng khám Đa khoa Thu Cúc",
+        address: "286 Thụy Khuê, Tây Hồ, Hà Nội",
+        openStatus: "Đang mở cửa",
+        lat: 21.0375,
+        lng: 105.8038,
+      ));
+    }
+
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        contentPadding: const EdgeInsets.all(20),
+        title: const Row(
+          children: [
+            Icon(Icons.location_on_rounded, color: Color(0xFF006B70)),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                "Đề xuất cho bạn",
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Color(0xFF006B70),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: displayList.map((h) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _buildHospitalCard(
+                ctx,
+                h.name,
+                "Cách đây ~1km", // Simplified for UI
+                h.openStatus,
+                photoUrl: h.photoUrl,
+                lat: h.lat,
+                lng: h.lng,
+                address: h.address,
+              ),
+            )).toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text(
+              "Đóng",
+              style: TextStyle(
+                color: Colors.grey,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHospitalCard(
+    BuildContext ctx,
+    String name,
+    String distance,
+    String status, {
+    bool isEmergency = false,
+    String? photoUrl,
+    double lat = 0.0,
+    double lng = 0.0,
+    String address = "",
+  }) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.pop(ctx);
+        // Dispatch to navigationProvider
+        final hospital = Hospital(
+          name: name,
+          address: address,
+          openStatus: status,
+          lat: lat,
+          lng: lng,
+          photoUrl: photoUrl,
+        );
+        ref.read(navigationProvider.notifier).setHospital(hospital, null, null);
+        context.go('/navigation'); // Chuyển hướng sang Agent 2
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+          border: Border.all(
+            color: isEmergency
+                ? Colors.red.withOpacity(0.3)
+                : const Color(0xFFE5F1F1),
+          ),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF4FAFA),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              clipBehavior: Clip.hardEdge,
+              child: photoUrl != null 
+                ? (photoUrl.startsWith('http') 
+                    ? Image.network(photoUrl, fit: BoxFit.cover, errorBuilder: (c,e,s) => const Icon(Icons.local_hospital_rounded, color: Color(0xFF006A71), size: 28))
+                    : Image.asset(photoUrl, fit: BoxFit.cover, errorBuilder: (c,e,s) => const Icon(Icons.local_hospital_rounded, color: Color(0xFF006A71), size: 28)))
+                : const Icon(Icons.local_hospital_rounded, color: Color(0xFF006A71), size: 28),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                      color: Color(0xFF2C3E50),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    distance,
+                    style: const TextStyle(
+                      color: Color(0xFF7F8C8D),
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    status,
+                    style: TextStyle(
+                      color: isEmergency ? Colors.red : Colors.green,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(
+                Icons.directions_rounded,
+                color: Colors.blueAccent,
+                size: 28,
+              ),
+              onPressed: () {
+                Navigator.pop(ctx);
+                final hospital = Hospital(name: name, address: address, openStatus: status, lat: lat, lng: lng, photoUrl: photoUrl);
+                ref.read(navigationProvider.notifier).setHospital(hospital, null, null);
+                context.go('/navigation');
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

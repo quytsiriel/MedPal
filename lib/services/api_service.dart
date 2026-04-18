@@ -70,6 +70,24 @@ class ApiService {
     }
     throw Exception('Chat failed (${response.statusCode}): $detail');
   }
+  
+  /// [POST] /agent1/transcribe
+  /// Chỉ nhận diện giọng nói (không cần session ID). Dùng cho transcription-only cases.
+  Future<Map<String, dynamic>> transcribe(String voiceBase64) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/agent1/transcribe'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        "session_id": "transcribe_only", // Backend doesn't use it, but ChatRequest schema might expect it
+        "voice_base64": voiceBase64,
+      })
+    );
+    
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    }
+    throw Exception('Transcription failed (${response.statusCode}): ${response.body}');
+  }
 
   // ==========================================
   // AGENT 2: NAVIGATION & ROUTING (REAL GPS)

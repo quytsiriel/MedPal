@@ -4,26 +4,32 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:record/record.dart';
 
 import '../services/api_service.dart';
 import '../services/audio_reader.dart';
+import '../services/map_service.dart';
+import '../providers/navigation_provider.dart';
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+class HomeScreen extends ConsumerStatefulWidget {
+  final bool isFollowUp;
+  const HomeScreen({super.key, this.isFollowUp = false});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _isHeartPressed = false;
   bool _isLoading = false;
   String _currentReply = "MedPal đang chuẩn bị...";
   String? _currentSessionId;
   bool _showHospitalRecommendations = false;
   final TextEditingController _typeController = TextEditingController();
+  List<Hospital> _nearbyHospitals = []; // State for dynamic hospitals
+
 
   // ── Voice Recording ─────────────────────────────
   final AudioRecorder _audioRecorder = AudioRecorder();
@@ -45,9 +51,29 @@ class _HomeScreenState extends State<HomeScreen> {
     _startSession();
   }
 
+  @override
+  void didUpdateWidget(HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If we were in follow-up mode and now we are not, reset the session
+    if (oldWidget.isFollowUp && !widget.isFollowUp) {
+      _startSession();
+    }
+  }
+
   // 1. Quản lý trạng thái Session
   Future<void> _startSession() async {
     setState(() => _isLoading = true);
+    
+    if (widget.isFollowUp) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _currentReply = "Chúc mừng bạn đã đến nơi.\nBác sĩ có yêu cầu bạn tới khoa nào khác không?";
+        });
+      }
+      return;
+    }
+
     try {
       final res = await apiService.startSession();
       if (mounted) {
@@ -70,7 +96,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // 2. Logic gửi tin nhắn thật qua API Gemini
   void _sendMessage(String text) async {
-    if (text.trim().isEmpty || _currentSessionId == null) return;
+    if (text.trim().isEmpty) return;
+    if (!widget.isFollowUp && _currentSessionId == null) return;
 
     final inputLower = text.toLowerCase();
 
@@ -82,6 +109,15 @@ class _HomeScreenState extends State<HomeScreen> {
         inputLower.contains("chỉ đường")) {
       context.go('/navigation');
       return;
+    }
+
+    if (inputLower.contains("bệnh viện")) {
+      _showHospitalRecommendationsDialog();
+    }
+
+    if (widget.isFollowUp) {
+       await _handleFollowUpResponse(text);
+       return;
     }
 
     setState(() {
@@ -97,10 +133,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (!mounted) return;
 
+      final reply = response['reply'] ?? "Lỗi: Không nhận được câu trả lời từ AI.";
+
       setState(() {
         _isLoading = false;
-        _currentReply =
-            response['reply'] ?? "Lỗi: Không nhận được câu trả lời từ AI.";
+        _currentReply = reply;
       });
 
       // Nếu Gemini phân loại đây là khẩn cấp
@@ -108,7 +145,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _showSeverityConfirmDialog(); // Bật Popup đỏ
       }
       // Nếu Gemini nhận thấy đã thu thập đủ -> Đề xuất bệnh viện
-      else if (response['stage'] == 'completed') {
+      else if (response['stage'] == 'completed' || 
+               response['stage'] == 'complete_visit' ||
+               reply.toLowerCase().contains("bệnh viện") ||
+               reply.contains("Hệ thống sẽ giúp bạn tìm bệnh viện phù hợp gần nhất")) {
         _showHospitalRecommendationsDialog();
       }
     } catch (e) {
@@ -117,6 +157,60 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = false;
           _currentReply = "Có lỗi xảy ra: $e";
         });
+      }
+    }
+  }
+
+  // --- Follow-up Logic for new department routing ---
+  Future<void> _handleFollowUpResponse(String userText) async {
+    setState(() => _isLoading = true);
+    final userLower = userText.trim().toLowerCase();
+
+    if (userLower.contains("không") || userLower.contains("no") || userLower.contains("chưa")) {
+      setState(() {
+        _currentReply = "Chúc bạn khám bệnh thành công!";
+        _isLoading = false;
+      });
+      // Delay briefly then reset to home for a fresh session if desired
+      await Future.delayed(const Duration(seconds: 3));
+      if (mounted && widget.isFollowUp) {
+        context.go('/'); 
+      }
+      return;
+    }
+
+    // Attempt to match department and redirect directly to indoor navigation
+    try {
+      final success = await ref.read(navigationProvider.notifier).setDepartmentFromFollowUp(userText);
+      
+      if (success) {
+        final navState = ref.read(navigationProvider);
+        if (mounted) {
+          setState(() {
+            _currentReply = "Đã tìm thấy thông tin. Đang điều hướng bạn tới ${navState.targetDepartment} tại Bệnh viện E...";
+          });
+        }
+        // Short pause to let them read the canonical name
+        await Future.delayed(const Duration(seconds: 2));
+        if (mounted) {
+          context.go('/navigation');
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _currentReply = "Không tìm thấy khoa bạn cần. Bác sĩ có yêu cầu bạn đến với khoa nào khác không?";
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _currentReply = "Lỗi tra soát: $e";
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -141,6 +235,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startRecording() async {
     try {
       if (await _audioRecorder.hasPermission()) {
+        // Automatically request GPS location silently in the background
+        mapService.getCurrentLocation();
+        
         final filePath = await createRecordingPath();
         final config = const RecordConfig(
           encoder: AudioEncoder.wav,
@@ -188,7 +285,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _recordDuration = Duration.zero;
     });
 
-    if (path == null || _currentSessionId == null) return;
+    if (path == null) return;
+    
+    // In Follow-up mode, we use a temporary session ID to just get transcription
+    final String sessionToUse = _currentSessionId ?? 'temp_voice_session';
 
     setState(() {
       _isLoading = true;
@@ -200,44 +300,51 @@ class _HomeScreenState extends State<HomeScreen> {
       final base64Audio = base64Encode(bytes);
 
       final response = await apiService.chatSymptom(
-        sessionId: _currentSessionId!,
+        sessionId: sessionToUse,
         voiceBase64: base64Audio,
       );
 
-      if (!mounted) return;
-
       final transcript = response['transcript'] as String?;
-      final reply = response['reply'] ?? 'Lỗi: Không nhận được câu trả lời.';
-
-      setState(() {
-        _isLoading = false;
-        _currentReply = reply;
-      });
-
-      // Hiển thị transcript trong snackbar
-      if (transcript != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Bạn nói: "$transcript"'),
-            duration: const Duration(seconds: 3),
-            backgroundColor: const Color(0xFF006A71),
-          ),
-        );
-      }
-
-      if (response['emergency'] == true) {
-        _showSeverityConfirmDialog();
-      } else if (response['stage'] == 'completed' ||
-                 response['stage'] == 'complete_visit' ||
-                 response['stage'] == 'complete_no_visit') {
-        _showHospitalRecommendationsDialog();
+      if (transcript != null) {
+         if (widget.isFollowUp) {
+            // Use the transcription-only response to handle navigation
+            await _handleFollowUpResponse(transcript);
+         } else {
+            final reply = response['reply'] ?? "Tôi đã nhận được tin nhắn giọng nói của bạn.";
+            setState(() {
+              _currentReply = reply;
+            });
+            
+            if (response['stage'] == 'completed' || response['stage'] == 'complete_visit') {
+               _showHospitalRecommendationsDialog();
+            }
+         }
       }
     } catch (e) {
+      // HANDLE 404 Session Not Found by falling back to transcription only
+      if (e.toString().contains("404") && widget.isFollowUp) {
+        try {
+          final bytes = await readRecordedAudio(path);
+          final base64Audio = base64Encode(bytes);
+          final transcribeRes = await apiService.transcribe(base64Audio);
+          final text = transcribeRes['transcript'];
+          if (text != null) {
+            await _handleFollowUpResponse(text);
+          }
+          return;
+        } catch (innerE) {
+           print("Transcription fallback failed: $innerE");
+        }
+      }
       if (mounted) {
         setState(() {
           _isLoading = false;
           _currentReply = 'Lỗi nhận dạng giọng nói: $e';
         });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -450,8 +557,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              _buildCustomHeader(context),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               _buildSpeechBubble(context),
               const SizedBox(height: 16),
               _buildRobotMascot(context),
@@ -470,42 +576,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 0,
-        type: BottomNavigationBarType
-            .fixed, // Giữ fixed để phòng hờ sau này teammate có thêm nút thứ 4, thứ 5
-        selectedItemColor: const Color(0xFF006B70),
-        unselectedItemColor: Colors.grey,
-        onTap: (index) {
-          switch (index) {
-            case 0:
-              context.go('/'); // Trang hiện tại (Symptoms)
-              break;
-            case 1:
-              context.go('/navigation'); // Agent 2
-              break;
-            case 2:
-              context.go('/prescriptions'); // Agent 3
-              break;
-            // TODO (Teammate): Mở rộng logic chuyển trang (case 3, case 4...) cho Agent mới ở đây
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.medical_services_rounded),
-            label: 'Khám bệnh',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.navigation_rounded),
-            label: 'Chỉ đường',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.receipt_long_rounded),
-            label: 'Đơn thuốc',
-          ),
-          // TODO (Teammate): Khi có Agent mới, copy BottomNavigationBarItem và dán vào dưới dòng này
-        ],
       ),
     );
   }
@@ -557,35 +627,77 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           child: _isLoading
-              ? const SizedBox(
-                  height: 30,
-                  child: Center(
-                    child: SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        color: Color(0xFF006A71),
-                      ),
-                    ),
-                  ),
-                )
-              : Text(
-                  _currentReply,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF006B70),
-                    height: 1.4,
-                  ),
-                ),
+               ? const SizedBox(
+                   height: 30,
+                   child: Center(
+                     child: SizedBox(
+                       width: 24,
+                       height: 24,
+                       child: CircularProgressIndicator(
+                         strokeWidth: 3,
+                         color: Color(0xFF006A71),
+                       ),
+                     ),
+                   ),
+                 )
+               : AnimatedTypewriterText(
+                   text: _currentReply,
+                   textAlign: TextAlign.center,
+                   style: const TextStyle(
+                     fontSize: 20,
+                     fontWeight: FontWeight.bold,
+                     color: Color(0xFF006B70),
+                     height: 1.4,
+                   ),
+                 ),
         ),
       ),
     );
   }
 
-  void _showHospitalRecommendationsDialog() {
+  void _showHospitalRecommendationsDialog() async {
+    // 1. Fetch real nearby hospitals if not already fetched
+    if (_nearbyHospitals.isEmpty) {
+      final loc = await mapService.getCurrentLocation();
+      if (loc != null) {
+        _nearbyHospitals = await apiService.getNearbyHospitals(loc.lat, loc.lng);
+      }
+    }
+
+    // 2. Prepare the list: Bệnh viện E first, then 2 real nearest
+    List<Hospital> displayList = [];
+    
+    // Hardcode BV E as primary choice for Demo
+    displayList.add(Hospital(
+      name: "Bệnh viện E",
+      address: "89 Trần Cung, Nghĩa Tân, Cầu Giấy, Hà Nội",
+      openStatus: "Đang mở cửa",
+      lat: 21.0463,
+      lng: 105.7865,
+      photoUrl: "assets/benhvien_e.jpg",
+    ));
+
+    // Add up to 2 more from real API results (avoid duplicating BV E if it's there)
+    for (var h in _nearbyHospitals) {
+      if (displayList.length >= 3) break;
+      if (!h.name.contains("Bệnh viện E")) {
+        displayList.add(h);
+      }
+    }
+
+    // Fallback if API results are thin
+    if (displayList.length < 3) {
+      displayList.add(Hospital(
+        name: "Phòng khám Đa khoa Thu Cúc",
+        address: "286 Thụy Khuê, Tây Hồ, Hà Nội",
+        openStatus: "Đang mở cửa",
+        lat: 21.0375,
+        lng: 105.8038,
+      ));
+    }
+
+    if (!mounted) return;
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -597,7 +709,7 @@ class _HomeScreenState extends State<HomeScreen> {
             SizedBox(width: 8),
             Expanded(
               child: Text(
-                "Đề xuất phòng khám",
+                "Đề xuất cho bạn",
                 style: TextStyle(
                   fontSize: 18,
                   color: Color(0xFF006B70),
@@ -611,29 +723,19 @@ class _HomeScreenState extends State<HomeScreen> {
           width: double.maxFinite,
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildHospitalCard(
+            children: displayList.map((h) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _buildHospitalCard(
                 ctx,
-                "Bệnh viện Đa khoa Medlatec",
-                "Cách đây 1.2 km",
-                "Đang mở cửa",
+                h.name,
+                "Cách đây ~1km", // Simplified for UI
+                h.openStatus,
+                photoUrl: h.photoUrl,
+                lat: h.lat,
+                lng: h.lng,
+                address: h.address,
               ),
-              const SizedBox(height: 12),
-              _buildHospitalCard(
-                ctx,
-                "Phòng khám Đa khoa Thu Cúc",
-                "Cách đây 2.5 km",
-                "Đang mở cửa",
-              ),
-              const SizedBox(height: 12),
-              _buildHospitalCard(
-                ctx,
-                "Bệnh viện Bạch Mai",
-                "Cách đây 4.0 km",
-                "Cấp cứu 24/7",
-                isEmergency: true,
-              ),
-            ],
+            )).toList(),
           ),
         ),
         actions: [
@@ -659,10 +761,24 @@ class _HomeScreenState extends State<HomeScreen> {
     String distance,
     String status, {
     bool isEmergency = false,
+    String? photoUrl,
+    double lat = 0.0,
+    double lng = 0.0,
+    String address = "",
   }) {
     return GestureDetector(
       onTap: () {
         Navigator.pop(ctx);
+        // Dispatch to navigationProvider
+        final hospital = Hospital(
+          name: name,
+          address: address,
+          openStatus: status,
+          lat: lat,
+          lng: lng,
+          photoUrl: photoUrl,
+        );
+        ref.read(navigationProvider.notifier).setHospital(hospital, null, null);
         context.go('/navigation'); // Chuyển hướng sang Agent 2
       },
       child: Container(
@@ -686,16 +802,18 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(
           children: [
             Container(
-              padding: const EdgeInsets.all(10),
+              width: 50,
+              height: 50,
               decoration: BoxDecoration(
                 color: const Color(0xFFF4FAFA),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(
-                Icons.local_hospital_rounded,
-                color: Color(0xFF006A71),
-                size: 28,
-              ),
+              clipBehavior: Clip.hardEdge,
+              child: photoUrl != null 
+                ? (photoUrl.startsWith('http') 
+                    ? Image.network(photoUrl, fit: BoxFit.cover, errorBuilder: (c,e,s) => const Icon(Icons.local_hospital_rounded, color: Color(0xFF006A71), size: 28))
+                    : Image.asset(photoUrl, fit: BoxFit.cover, errorBuilder: (c,e,s) => const Icon(Icons.local_hospital_rounded, color: Color(0xFF006A71), size: 28)))
+                : const Icon(Icons.local_hospital_rounded, color: Color(0xFF006A71), size: 28),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -738,7 +856,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               onPressed: () {
                 Navigator.pop(ctx);
-                context.go('/navigation'); // Chuyển hướng sang Agent 2
+                final hospital = Hospital(name: name, address: address, openStatus: status, lat: lat, lng: lng, photoUrl: photoUrl);
+                ref.read(navigationProvider.notifier).setHospital(hospital, null, null);
+                context.go('/navigation');
               },
             ),
           ],
@@ -823,7 +943,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: TextField(
               controller: _typeController,
               decoration: InputDecoration(
-                hintText: "Nhập triệu chứng...",
+                hintText: widget.isFollowUp ? "Nhập tên khoa hoặc 'Không'..." : "Nhập triệu chứng...",
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(
@@ -874,6 +994,76 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class AnimatedTypewriterText extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+  final TextAlign textAlign;
+  final Duration speed;
+
+  const AnimatedTypewriterText({
+    super.key,
+    required this.text,
+    required this.style,
+    this.textAlign = TextAlign.start,
+    this.speed = const Duration(milliseconds: 30),
+  });
+
+  @override
+  State<AnimatedTypewriterText> createState() => _AnimatedTypewriterTextState();
+}
+
+class _AnimatedTypewriterTextState extends State<AnimatedTypewriterText> {
+  String _displayedText = "";
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startAnimation();
+  }
+
+  @override
+  void didUpdateWidget(AnimatedTypewriterText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _startAnimation();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startAnimation() {
+    _timer?.cancel();
+    _displayedText = "";
+    int index = 0;
+    _timer = Timer.periodic(widget.speed, (timer) {
+      if (index < widget.text.length) {
+        if (mounted) {
+          setState(() {
+            _displayedText += widget.text[index];
+            index++;
+          });
+        }
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _displayedText,
+      style: widget.style,
+      textAlign: widget.textAlign,
     );
   }
 }
