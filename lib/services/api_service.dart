@@ -55,7 +55,15 @@ class ApiService {
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     }
-    throw Exception('Chat failed: ${response.statusCode}');
+    // Trích xuất detail từ backend error response
+    String detail = '';
+    try {
+      final errorBody = jsonDecode(response.body);
+      detail = errorBody['detail'] ?? response.body;
+    } catch (_) {
+      detail = response.body;
+    }
+    throw Exception('Chat failed (${response.statusCode}): $detail');
   }
 
 

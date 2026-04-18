@@ -1,7 +1,14 @@
 
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:record/record.dart';
+
 import '../models/chat_message.dart';
 import '../services/api_service.dart';
+import '../services/audio_reader.dart';
 
 class SymptomScreen extends StatefulWidget {
   const SymptomScreen({super.key});
@@ -19,10 +26,25 @@ class _SymptomScreenState extends State<SymptomScreen> {
   bool _isCompleted = false; // Phiên đã kết thúc
   String? _currentSessionId;
 
+  // ── Voice Recording ─────────────────────────────
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _isRecording = false;
+  Duration _recordDuration = Duration.zero;
+  Timer? _recordTimer;
+
   @override
   void initState() {
     super.initState();
     _startConversation();
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    _scrollController.dispose();
+    _recordTimer?.cancel();
+    _audioRecorder.dispose();
+    super.dispose();
   }
 
   // 1. Hook khởi tạo lấy session_id
@@ -55,7 +77,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
     }
   }
 
-  // 2. Logic gửi tin nhắn với session_id
+  // 2. Logic gửi tin nhắn text với session_id
   void _handleSubmitted(String text) async {
     if (text.trim().isEmpty || _currentSessionId == null || _isCompleted) return;
     _textController.clear();
@@ -77,32 +99,7 @@ class _SymptomScreenState extends State<SymptomScreen> {
         sessionId: _currentSessionId!,
         message: text,
       );
-      
-      final stage = response['stage'] as String? ?? 'collecting';
-      final decision = response['decision'] as String?;
-      final advice = response['advice'] as String?;
-      final record = response['record'] as Map<String, dynamic>?;
-      final recommendedDept = response['recommended_dept'] as String?;
-      
-      setState(() {
-        _messages.add(
-          ChatMessage(
-            text: response['reply'] ?? "Tôi đang phân tích...",
-            isUser: false,
-            timestamp: DateTime.now(),
-            stage: stage,
-            decision: decision,
-            advice: advice,
-            record: record,
-            recommendedDept: recommendedDept,
-          ),
-        );
-        
-        // Đánh dấu phiên kết thúc nếu complete
-        if (stage == 'complete_visit' || stage == 'complete_no_visit') {
-          _isCompleted = true;
-        }
-      });
+      _handleAgentResponse(response);
     } catch (e) {
        setState(() {
           _messages.add(
@@ -119,6 +116,169 @@ class _SymptomScreenState extends State<SymptomScreen> {
       });
       _scrollToBottom();
     }
+  }
+
+  // ── Voice Recording Methods ─────────────────────
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      await _stopRecordingAndSend();
+    } else {
+      await _startRecording();
+    }
+  }
+
+  Future<void> _startRecording() async {
+    try {
+      if (await _audioRecorder.hasPermission()) {
+        final filePath = await createRecordingPath();
+        final config = kIsWeb
+            ? const RecordConfig(encoder: AudioEncoder.opus)
+            : const RecordConfig(
+                encoder: AudioEncoder.wav,
+                sampleRate: 16000,
+                numChannels: 1,
+              );
+        await _audioRecorder.start(config, path: filePath);
+        setState(() {
+          _isRecording = true;
+          _recordDuration = Duration.zero;
+        });
+        _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (mounted) {
+            setState(() => _recordDuration += const Duration(seconds: 1));
+          }
+        });
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cần cấp quyền microphone để ghi âm.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Lỗi ghi âm: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _stopRecordingAndSend() async {
+    _recordTimer?.cancel();
+    final path = await _audioRecorder.stop();
+    setState(() {
+      _isRecording = false;
+      _recordDuration = Duration.zero;
+    });
+
+    if (path == null || _currentSessionId == null) return;
+
+    try {
+      // Đọc audio bytes (cross-platform: File trên mobile, blob URL trên web)
+      final bytes = await readRecordedAudio(path);
+      final base64Audio = base64Encode(bytes);
+
+      // Thêm placeholder tin nhắn đang nhận dạng
+      setState(() {
+        _messages.add(ChatMessage(
+          text: '🎤 Đang nhận dạng giọng nói...',
+          isUser: true,
+          timestamp: DateTime.now(),
+        ));
+        _isLoading = true;
+      });
+      _scrollToBottom();
+
+      // Gửi audio đến backend
+      final response = await apiService.chatSymptom(
+        sessionId: _currentSessionId!,
+        voiceBase64: base64Audio,
+      );
+
+      // Cập nhật placeholder với transcript thực tế
+      final transcript = response['transcript'] as String?;
+      if (transcript != null && _messages.isNotEmpty) {
+        // Tìm placeholder message cuối cùng và thay thế
+        for (int i = _messages.length - 1; i >= 0; i--) {
+          if (_messages[i].isUser && _messages[i].text.contains('Đang nhận dạng')) {
+            setState(() {
+              _messages[i] = ChatMessage(
+                text: transcript,
+                isUser: true,
+                timestamp: _messages[i].timestamp,
+              );
+            });
+            break;
+          }
+        }
+      }
+
+      // Xử lý response từ Agent
+      _handleAgentResponse(response);
+    } catch (e) {
+      setState(() {
+        // Cập nhật placeholder thành lỗi
+        for (int i = _messages.length - 1; i >= 0; i--) {
+          if (_messages[i].isUser && _messages[i].text.contains('Đang nhận dạng')) {
+            _messages[i] = ChatMessage(
+              text: '🎤 Không thể nhận dạng giọng nói',
+              isUser: true,
+              timestamp: _messages[i].timestamp,
+            );
+            break;
+          }
+        }
+        _messages.add(
+          ChatMessage(
+            text: "Lỗi nhận dạng giọng nói. Vui lòng thử lại hoặc nhập bằng văn bản.",
+            isUser: false,
+            timestamp: DateTime.now(),
+          ),
+        );
+      });
+    } finally {
+      setState(() => _isLoading = false);
+      _scrollToBottom();
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    _recordTimer?.cancel();
+    await _audioRecorder.stop();
+    setState(() {
+      _isRecording = false;
+      _recordDuration = Duration.zero;
+    });
+  }
+
+  // ── Shared Response Handler ─────────────────────
+  void _handleAgentResponse(Map<String, dynamic> response) {
+    final stage = response['stage'] as String? ?? 'collecting';
+    final decision = response['decision'] as String?;
+    final advice = response['advice'] as String?;
+    final record = response['record'] as Map<String, dynamic>?;
+    final recommendedDept = response['recommended_dept'] as String?;
+
+    setState(() {
+      _messages.add(
+        ChatMessage(
+          text: response['reply'] ?? "Tôi đang phân tích...",
+          isUser: false,
+          timestamp: DateTime.now(),
+          stage: stage,
+          decision: decision,
+          advice: advice,
+          record: record,
+          recommendedDept: recommendedDept,
+        ),
+      );
+
+      // Đánh dấu phiên kết thúc nếu complete
+      if (stage == 'complete_visit' || stage == 'complete_no_visit') {
+        _isCompleted = true;
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -582,71 +742,173 @@ class _SymptomScreenState extends State<SymptomScreen> {
     );
   }
 
-  Widget _buildInputArea() {
+  // ── Recording Indicator ─────────────────────────
+  Widget _buildRecordingIndicator() {
+    final minutes = _recordDuration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = _recordDuration.inSeconds.remainder(60).toString().padLeft(2, '0');
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-           BoxShadow(
-             color: Colors.black.withValues(alpha: 0.05),
-             blurRadius: 10,
-             offset: const Offset(0, -5),
-           )
-        ],
-      ),
-      child: SafeArea(
-        child: Row(
-          children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF6FAFB),
-                  borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: const Color(0xFFDAE4E6)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _textController,
-                        enabled: !_isLoading && !_isInit && !_isCompleted,
-                        style: const TextStyle(fontSize: 18),
-                        decoration: const InputDecoration(
-                          hintText: 'Nhập triệu chứng...',
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                        ),
-                        onSubmitted: _isLoading ? null : _handleSubmitted,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.send_rounded, color: Color(0xFF006A71)),
-                      onPressed: _isLoading || _isInit || _isCompleted
-                          ? null 
-                          : () => _handleSubmitted(_textController.text),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            GestureDetector(
-               onTap: () {
-                // TBD: Tích hợp Ghi âm
-              },
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: const BoxDecoration(
-                  color: Color(0xFF006A71),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.mic_none, color: Colors.white, size: 28),
-              ),
-            ),
-          ],
+        color: const Color(0xFFFFEBEE),
+        border: Border(
+          top: BorderSide(color: Colors.red.shade200, width: 1),
         ),
       ),
+      child: Row(
+        children: [
+          // Pulsing red dot (nhấp nháy mỗi giây nhờ Timer rebuild)
+          AnimatedOpacity(
+            opacity: _recordDuration.inSeconds.isEven ? 1.0 : 0.3,
+            duration: const Duration(milliseconds: 300),
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            'Đang ghi âm',
+            style: TextStyle(
+              color: Colors.red.shade700,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            '$minutes:$seconds',
+            style: TextStyle(
+              color: Colors.red.shade700,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'monospace',
+            ),
+          ),
+          const SizedBox(width: 16),
+          GestureDetector(
+            onTap: _cancelRecording,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.red.shade300),
+              ),
+              child: Text(
+                'Hủy',
+                style: TextStyle(
+                  color: Colors.red.shade600,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Input Area with Mic Button ──────────────────
+  Widget _buildInputArea() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Recording banner (hiện khi đang ghi âm)
+        if (_isRecording) _buildRecordingIndicator(),
+
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+               BoxShadow(
+                 color: Colors.black.withValues(alpha: 0.05),
+                 blurRadius: 10,
+                 offset: const Offset(0, -5),
+               )
+            ],
+          ),
+          child: SafeArea(
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF6FAFB),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(color: const Color(0xFFDAE4E6)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _textController,
+                            enabled: !_isLoading && !_isInit && !_isCompleted && !_isRecording,
+                            style: const TextStyle(fontSize: 18),
+                            decoration: InputDecoration(
+                              hintText: _isRecording ? 'Đang ghi âm...' : 'Nhập triệu chứng...',
+                              hintStyle: TextStyle(
+                                color: _isRecording ? Colors.red.shade300 : Colors.grey,
+                              ),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                            ),
+                            onSubmitted: _isLoading ? null : _handleSubmitted,
+                          ),
+                        ),
+                        if (!_isRecording)
+                          IconButton(
+                            icon: const Icon(Icons.send_rounded, color: Color(0xFF006A71)),
+                            onPressed: _isLoading || _isInit || _isCompleted
+                                ? null 
+                                : () => _handleSubmitted(_textController.text),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                // ── Mic / Stop Button ──
+                GestureDetector(
+                  onTap: _isLoading || _isInit || _isCompleted
+                      ? null
+                      : _toggleRecording,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: _isRecording
+                          ? const Color(0xFFE53935)
+                          : const Color(0xFF006A71),
+                      shape: BoxShape.circle,
+                      boxShadow: _isRecording
+                          ? [
+                              BoxShadow(
+                                color: const Color(0xFFE53935).withValues(alpha: 0.4),
+                                blurRadius: 16,
+                                spreadRadius: 2,
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Icon(
+                      _isRecording ? Icons.stop_rounded : Icons.mic_none,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

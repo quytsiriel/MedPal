@@ -8,6 +8,7 @@ import re
 from openai import OpenAI
 from services.firebase import get_db
 from agents.agent1.rag import search
+from services.whisper import transcribe_audio_base64
 
 router = APIRouter(prefix="/agent1", tags=["Agent 1"])
 
@@ -64,7 +65,7 @@ PROMPT_BRAIN2_PATH = os.path.join(os.path.dirname(__file__), "agent1", "prompt_b
 def create_brain1_client():
     """Brain 1 (Port 11434): RAG + Hội thoại + Tạo hồ sơ + Quyết định"""
     return OpenAI(
-        base_url=os.environ.get("OLLAMA_BASE_URL", "http://124.197.18.220:11434/v1"),
+        base_url=os.environ.get("OLLAMA_BASE_URL", "http://124.197.18.208:11434/v1"),
         api_key="ollama"
     )
 
@@ -467,7 +468,27 @@ def chat_with_agent1(request: ChatRequest):
     task_scores = session.get("task_scores", {tid: 0.0 for tid, _ in TASKS})
     symptoms = session.get("symptoms_accumulated", [])
     is_first_turn = session.get("is_first_turn", True)
-    user_input = request.message.strip()
+    
+    # ─── VOICE INPUT: Speech-to-Text ────────────────
+    transcript = None
+    if request.voice_base64:
+        try:
+            print(f"[STT] Received voice_base64, length: {len(request.voice_base64)}")
+            transcript = transcribe_audio_base64(request.voice_base64)
+            user_input = transcript
+            print(f"[STT] Transcription successful: {transcript}")
+        except Exception as e:
+            print(f"[STT] Transcription failed: {e}")
+            return ChatResponse(
+                reply=f"Không thể nhận dạng giọng nói. Vui lòng thử lại hoặc nhập bằng văn bản.\n\n(Chi tiết: {e})",
+                emergency=False,
+                stage="collecting",
+                transcript=None
+            )
+    elif request.message:
+        user_input = request.message.strip()
+    else:
+        raise HTTPException(status_code=400, detail="Thiếu message hoặc voice_base64")
     
     # ─── STEP 1: EMERGENCY CHECK ────────────────────
     if detect_emergency(user_input):
@@ -478,7 +499,7 @@ def chat_with_agent1(request: ChatRequest):
             "emergency": True,
             "status": "completed"
         })
-        return ChatResponse(reply=EMERGENCY_MESSAGE, emergency=True, stage="complete_visit")
+        return ChatResponse(reply=EMERGENCY_MESSAGE, emergency=True, stage="complete_visit", transcript=transcript)
 
     # ─── STEP 2: BRAIN 2 — CLASSIFY USER INPUT ─────
     last_assistant_msg = ""
@@ -504,7 +525,7 @@ def chat_with_agent1(request: ChatRequest):
         update_session(request.session_id, {
             "conversation_history": history,
         })
-        return ChatResponse(reply=clarify_reply, emergency=False, stage="clarifying")
+        return ChatResponse(reply=clarify_reply, emergency=False, stage="clarifying", transcript=transcript)
 
     # ─── STEP 3: BRAIN 2 — SCORING ─────────────────
     # Lấy processed_input từ Brain 2 (có thể đã được xử lý/rút gọn)
@@ -592,7 +613,8 @@ def chat_with_agent1(request: ChatRequest):
             decision=decision,
             advice=advice if decision == "no_visit" else None,
             record=record_json,
-            recommended_dept=dept if decision == "visit" else None
+            recommended_dept=dept if decision == "visit" else None,
+            transcript=transcript
         )
 
     # ─── STEP 5: BRAIN 1 — GENERATE NEXT QUESTION ──
@@ -660,4 +682,4 @@ def chat_with_agent1(request: ChatRequest):
         "is_first_turn": False
     })
     
-    return ChatResponse(reply=ai_reply, emergency=False, stage="collecting")
+    return ChatResponse(reply=ai_reply, emergency=False, stage="collecting", transcript=transcript)

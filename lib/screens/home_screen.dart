@@ -1,8 +1,14 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'dart:convert';
+import 'package:record/record.dart';
+
 import '../services/api_service.dart';
-import 'dart:math' as math;
+import '../services/audio_reader.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -19,9 +25,17 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _showHospitalRecommendations = false;
   final TextEditingController _typeController = TextEditingController();
 
+  // ── Voice Recording ─────────────────────────────
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  bool _isRecording = false;
+  Duration _recordDuration = Duration.zero;
+  Timer? _recordTimer;
+
   @override
   void dispose() {
     _typeController.dispose();
+    _recordTimer?.cancel();
+    _audioRecorder.dispose();
     super.dispose();
   }
 
@@ -102,6 +116,118 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _isLoading = false;
           _currentReply = "Có lỗi xảy ra: $e";
+        });
+      }
+    }
+  }
+
+  // ── Voice Recording Methods ─────────────────────
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      await _stopRecordingAndSend();
+    } else {
+      await _startRecording();
+    }
+  }
+
+  Future<void> _startRecording() async {
+    try {
+      if (await _audioRecorder.hasPermission()) {
+        final filePath = await createRecordingPath();
+        final config = const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        );
+        await _audioRecorder.start(config, path: filePath);
+        setState(() {
+          _isRecording = true;
+          _isHeartPressed = true;
+          _recordDuration = Duration.zero;
+          _currentReply = '🎤 Đang ghi âm... Nhấn lại trái tim để gửi.';
+        });
+        _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (mounted) {
+            final m = _recordDuration.inMinutes.remainder(60).toString().padLeft(2, '0');
+            final s = _recordDuration.inSeconds.remainder(60).toString().padLeft(2, '0');
+            setState(() {
+              _recordDuration += const Duration(seconds: 1);
+              _currentReply = '🎤 Đang ghi âm... $m:$s\nNhấn lại trái tim để gửi.';
+            });
+          }
+        });
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Cần cấp quyền microphone để ghi âm.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _currentReply = 'Lỗi ghi âm: $e');
+      }
+    }
+  }
+
+  Future<void> _stopRecordingAndSend() async {
+    _recordTimer?.cancel();
+    final path = await _audioRecorder.stop();
+    setState(() {
+      _isRecording = false;
+      _isHeartPressed = false;
+      _recordDuration = Duration.zero;
+    });
+
+    if (path == null || _currentSessionId == null) return;
+
+    setState(() {
+      _isLoading = true;
+      _currentReply = '🎤 Đang nhận dạng giọng nói...';
+    });
+
+    try {
+      final bytes = await readRecordedAudio(path);
+      final base64Audio = base64Encode(bytes);
+
+      final response = await apiService.chatSymptom(
+        sessionId: _currentSessionId!,
+        voiceBase64: base64Audio,
+      );
+
+      if (!mounted) return;
+
+      final transcript = response['transcript'] as String?;
+      final reply = response['reply'] ?? 'Lỗi: Không nhận được câu trả lời.';
+
+      setState(() {
+        _isLoading = false;
+        _currentReply = reply;
+      });
+
+      // Hiển thị transcript trong snackbar
+      if (transcript != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Bạn nói: "$transcript"'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: const Color(0xFF006A71),
+          ),
+        );
+      }
+
+      if (response['emergency'] == true) {
+        _showSeverityConfirmDialog();
+      } else if (response['stage'] == 'completed' ||
+                 response['stage'] == 'complete_visit' ||
+                 response['stage'] == 'complete_no_visit') {
+        _showHospitalRecommendationsDialog();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _currentReply = 'Lỗi nhận dạng giọng nói: $e';
         });
       }
     }
@@ -321,12 +447,12 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 16),
               _buildRobotMascot(context),
               const SizedBox(height: 16),
-              const Text(
-                'Nhấn vào trái tim để bắt đầu nói',
+              Text(
+                _isRecording ? 'Nhấn lại trái tim để gửi' : 'Nhấn vào trái tim để bắt đầu nói',
                 style: TextStyle(
                   fontSize: 16,
-                  color: Color(0xFF6B7B80),
-                  fontWeight: FontWeight.w500,
+                  color: _isRecording ? Colors.red : const Color(0xFF6B7B80),
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 48),
@@ -650,14 +776,7 @@ class _HomeScreenState extends State<HomeScreen> {
         Positioned(
           bottom: heartBottomOffset, // Vị trí trái tim lên xuống
           child: GestureDetector(
-            onTapDown: (_) => setState(() => _isHeartPressed = true),
-            onTapUp: (_) {
-              setState(() => _isHeartPressed = false);
-              // Tuơng lai: Bắt đầu thu âm voice ở đây
-              // Hiện tại (Mock): Chọc bằng chữ
-              _sendMessage("Giả lập thu âm...");
-            },
-            onTapCancel: () => setState(() => _isHeartPressed = false),
+            onTap: _isLoading ? null : _toggleRecording,
             child: SizedBox(
               width: heartWidth,
               height: heartHeight,

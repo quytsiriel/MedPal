@@ -9,7 +9,8 @@ class StartResponse(BaseModel):
 
 class ChatRequest(BaseModel):
     session_id: str
-    message: str
+    message: Optional[str] = None
+    voice_base64: Optional[str] = None  # Audio base64 cho Speech-to-Text
 
 class ChatResponse(BaseModel):
     reply: str
@@ -19,4 +20,5 @@ class ChatResponse(BaseModel):
     advice: Optional[str] = None  # Lời khuyên khi no_visit
     record: Optional[Dict] = None  # Hồ sơ JSON khi complete
     recommended_dept: Optional[str] = None  # Khoa đề nghị khi visit
+    transcript: Optional[str] = None  # Transcript từ voice input (STT)
     qr_code: Optional[str] = None

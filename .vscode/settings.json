@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "D:/C++/medpal/linux"
+    "cmake.sourceDirectory": "D:/C++/medpal/linux",
+    "python.terminal.useEnvFile": true
 }
