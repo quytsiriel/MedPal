@@ -226,6 +226,32 @@ class ApiService {
       "summary": "Hiện tại không thể phân tích đơn thuốc. Vui lòng thử lại sau."
     };
   }
+
+  /// [POST] /agent3/health-advice
+  /// Nạp dữ liệu từ Firebase session và gọi MedGemma để tạo lời khuyên sức khỏe
+  Future<Map<String, dynamic>> getHealthAdvice(String sessionId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/agent3/health-advice'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        "session_id": sessionId,
+      }),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    }
+
+    // Extract detail error
+    String detail = '';
+    try {
+      final errorBody = jsonDecode(utf8.decode(response.bodyBytes));
+      detail = errorBody['detail'] ?? response.body;
+    } catch (_) {
+      detail = response.body;
+    }
+    throw Exception('Health advice failed (${response.statusCode}): $detail');
+  }
 }
 
 // Global instance 

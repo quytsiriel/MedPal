@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'dart:io';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:convert';
 import '../services/api_service.dart';
+import '../providers/session_provider.dart';
+
 // --- Models ---
 class Medicine {
   final String name;
@@ -26,27 +28,58 @@ class ScheduleItem {
   ScheduleItem({required this.time, this.isTaken = false});
 }
 
-class PrescriptionScreen extends StatefulWidget {
+class HealthTip {
+  final String category; // "avoid", "do", "warning"
+  final String icon;
+  final String title;
+  final String description;
+
+  HealthTip({
+    required this.category,
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  factory HealthTip.fromJson(Map<String, dynamic> json) {
+    return HealthTip(
+      category: json['category'] ?? 'do',
+      icon: json['icon'] ?? 'info',
+      title: json['title'] ?? '',
+      description: json['description'] ?? '',
+    );
+  }
+}
+
+class PrescriptionScreen extends ConsumerStatefulWidget {
   const PrescriptionScreen({super.key});
 
   @override
-  State<PrescriptionScreen> createState() => _PrescriptionScreenState();
+  ConsumerState<PrescriptionScreen> createState() => _PrescriptionScreenState();
 }
 
-class _PrescriptionScreenState extends State<PrescriptionScreen> {
+class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   final ImagePicker _picker = ImagePicker();
-  
-  // State for Reminders
+
+  // --- Tab 1: Prescription State ---
   bool _remindersEnabled = true;
   bool _isLoading = false;
   String _summary = "Vui lòng chụp đơn thuốc để AI tự động phân tích.";
-
-  // Mock Data
   late List<Medicine> _medications;
+
+  // --- Tab 2: Health Advice State ---
+  bool _isAdviceLoading = false;
+  String _diagnosisSummary = "";
+  List<HealthTip> _healthTips = [];
+  String? _adviceError;
+  String? _lastFetchedSessionId; // Track which session we already fetched
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _medications = [
       Medicine(
         name: 'Paracetamol 500mg',
@@ -77,6 +110,14 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
       ),
     ];
   }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  // ── Tab 1: Prescription Logic ──────────────────────
 
   Future<void> _pickImage(ImageSource source) async {
     try {
@@ -170,6 +211,52 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
     return total == 0 ? 0 : taken / total;
   }
 
+  // ── Tab 2: Health Advice Logic ──────────────────────
+
+  Future<void> _fetchHealthAdvice([String? overrideSessionId]) async {
+    final sessionId = overrideSessionId ?? ref.read(sessionProvider).lastSessionId;
+    if (sessionId == null || sessionId.isEmpty) {
+      setState(() => _adviceError = "Chưa có phiên khám nào. Hãy khám bệnh với AI trước.");
+      return;
+    }
+
+    // Don't re-fetch if already got advice for this session
+    if (_lastFetchedSessionId == sessionId && _healthTips.isNotEmpty) return;
+
+    setState(() {
+      _isAdviceLoading = true;
+      _adviceError = null;
+      _healthTips = [];
+      _diagnosisSummary = "";
+    });
+
+    try {
+      final result = await apiService.getHealthAdvice(sessionId);
+
+      if (mounted) {
+        setState(() {
+          _isAdviceLoading = false;
+          _lastFetchedSessionId = sessionId;
+          _diagnosisSummary = result['diagnosis_summary'] ?? '';
+          if (result['tips'] != null) {
+            _healthTips = (result['tips'] as List)
+                .map((t) => HealthTip.fromJson(t as Map<String, dynamic>))
+                .toList();
+          }
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isAdviceLoading = false;
+          _adviceError = e.toString().replaceAll('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  // ── Build ──────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     const Color primaryColor = Color(0xFF006A71);
@@ -179,80 +266,485 @@ class _PrescriptionScreenState extends State<PrescriptionScreen> {
       backgroundColor: surfaceColor,
       body: Column(
         children: [
-          const SizedBox(height: 4),
+          // TabBar
+          Container(
+            color: Colors.white,
+            child: TabBar(
+              controller: _tabController,
+              indicatorColor: primaryColor,
+              indicatorWeight: 3,
+              labelColor: primaryColor,
+              unselectedLabelColor: Colors.grey,
+              labelStyle: GoogleFonts.lexend(fontWeight: FontWeight.bold, fontSize: 14),
+              unselectedLabelStyle: GoogleFonts.lexend(fontWeight: FontWeight.w400, fontSize: 14),
+              tabs: const [
+                Tab(
+                  icon: Icon(Icons.medication_rounded, size: 20),
+                  text: 'Đơn thuốc',
+                ),
+                Tab(
+                  icon: Icon(Icons.health_and_safety_rounded, size: 20),
+                  text: 'Lời khuyên',
+                ),
+              ],
+            ),
+          ),
+          // TabBarView
           Expanded(
-            child: SingleChildScrollView(
-                physics: const BouncingScrollPhysics(),
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildPrescriptionTab(primaryColor),
+                _buildHealthAdviceTab(primaryColor),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════
+  //  TAB 1: ĐƠN THUỐC (Giữ nguyên giao diện cũ)
+  // ══════════════════════════════════════════════════
+
+  Widget _buildPrescriptionTab(Color primaryColor) {
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 16),
+            _buildProgressSummary(primaryColor),
+            const SizedBox(height: 24),
+            _buildReminderToggle(primaryColor),
+            const SizedBox(height: 32),
+            Text(
+              'Lịch uống thuốc hôm nay',
+              style: GoogleFonts.lexend(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: const Color(0xFF2C3E50),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _summary,
+              style: GoogleFonts.lexend(
+                fontSize: 14,
+                color: Colors.grey.shade700,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (_isLoading)
+              const Center(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 8),
-                      // 2. Daily Progress Summary
-                      _buildProgressSummary(primaryColor),
-                      
-                      const SizedBox(height: 24),
-                      // 3. Notification Master Toggle
-                      _buildReminderToggle(primaryColor),
-
-                      const SizedBox(height: 32),
-                      // 4. Section Title
-                      Text(
-                        'Lịch uống thuốc hôm nay',
-                        style: GoogleFonts.lexend(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: const Color(0xFF2C3E50),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _summary,
-                        style: GoogleFonts.lexend(
-                          fontSize: 14,
-                          color: Colors.grey.shade700,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // 5. Medication List
-                      if (_isLoading)
-                        const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(40.0),
-                            child: CircularProgressIndicator(color: Color(0xFF006A71)),
-                          ),
-                        )
-                      else if (_medications.isEmpty)
-                        Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(32.0),
-                            child: Text(
-                              'Chưa có thuốc nào trong lịch.',
-                              style: GoogleFonts.lexend(color: Colors.grey.shade500),
-                            ),
-                          ),
-                        )
-                      else
-                        ..._medications.map((med) => _buildMedicationCard(med, primaryColor)),
-
-                      const SizedBox(height: 24),
-                      // 6. Add More Section
-                      _buildAddMoreSection(primaryColor),
-                      
-                      const SizedBox(height: 40),
-                    ],
+                  padding: EdgeInsets.all(40.0),
+                  child: CircularProgressIndicator(color: Color(0xFF006A71)),
+                ),
+              )
+            else if (_medications.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(32.0),
+                  child: Text(
+                    'Chưa có thuốc nào trong lịch.',
+                    style: GoogleFonts.lexend(color: Colors.grey.shade500),
                   ),
                 ),
+              )
+            else
+              ..._medications.map((med) => _buildMedicationCard(med, primaryColor)),
+            const SizedBox(height: 24),
+            _buildAddMoreSection(primaryColor),
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════
+  //  TAB 2: LỜI KHUYÊN SỨC KHỎE
+  // ══════════════════════════════════════════════════
+
+  Widget _buildHealthAdviceTab(Color primaryColor) {
+    // Watch the session state reactively
+    final sessionState = ref.watch(sessionProvider);
+    final hasSession = sessionState.lastSessionId != null;
+    final isCompleted = sessionState.isCompleted;
+
+    // Auto-fetch when session is completed and we haven't fetched for this session yet
+    if (isCompleted && hasSession && _lastFetchedSessionId != sessionState.lastSessionId && !_isAdviceLoading) {
+      // Schedule fetch after build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _fetchHealthAdvice(sessionState.lastSessionId);
+      });
+    }
+
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 16),
+
+            // Header Card
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [primaryColor, primaryColor.withValues(alpha: 0.85)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: primaryColor.withValues(alpha: 0.2),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, color: Colors.white, size: 24),
+                      const SizedBox(width: 10),
+                      Text(
+                        'MedGemma AI',
+                        style: GoogleFonts.lexend(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    hasSession
+                        ? (isCompleted
+                            ? 'Phiên khám đã hoàn tất. Lời khuyên sức khỏe đang được tạo tự động.'
+                            : 'Đang trong phiên khám. Hoàn thành khám bệnh để nhận lời khuyên.')
+                        : 'Hãy khám bệnh với AI trước để nhận lời khuyên chăm sóc sức khỏe cá nhân hóa.',
+                    style: GoogleFonts.lexend(
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Status indicator
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          hasSession
+                              ? (isCompleted ? Icons.check_circle : Icons.sync)
+                              : Icons.info_outline,
+                          color: Colors.white70,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            hasSession
+                                ? 'Session: ${sessionState.lastSessionId!.substring(0, 8)}...'
+                                : 'Chưa có phiên khám',
+                            style: GoogleFonts.lexend(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Manual refresh button if already have data
+                  if (isCompleted && _healthTips.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: _isAdviceLoading ? null : () {
+                          _lastFetchedSessionId = null; // Force re-fetch
+                          _fetchHealthAdvice();
+                        },
+                        icon: const Icon(Icons.refresh_rounded, size: 18, color: Colors.white70),
+                        label: Text(
+                          'Làm mới lời khuyên',
+                          style: GoogleFonts.lexend(fontSize: 13, color: Colors.white70),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // Loading indicator
+            if (_isAdviceLoading)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Column(
+                  children: [
+                    const CircularProgressIndicator(color: Color(0xFF006A71)),
+                    const SizedBox(height: 16),
+                    Text(
+                      'MedGemma dang phan tich du lieu benh ly...',
+                      style: GoogleFonts.lexend(
+                        fontSize: 14,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Qua trinh nay co the mat 30-60 giay',
+                      style: GoogleFonts.lexend(
+                        fontSize: 12,
+                        color: Colors.grey.shade400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // Error Message
+            if (_adviceError != null)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        _adviceError!,
+                        style: GoogleFonts.lexend(color: Colors.red.shade700, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            // Diagnosis Summary
+            if (_diagnosisSummary.isNotEmpty) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.blue.shade100),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.summarize_rounded, color: Colors.blue.shade700, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Tóm tắt tình trạng',
+                          style: GoogleFonts.lexend(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      _diagnosisSummary,
+                      style: GoogleFonts.lexend(
+                        fontSize: 14,
+                        color: Colors.blue.shade900,
+                        height: 1.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+
+            // Tips grouped by category
+            if (_healthTips.isNotEmpty) ...[
+              // AVOID tips
+              ..._buildTipSection(
+                title: 'Nên tránh',
+                icon: Icons.block_rounded,
+                color: Colors.red.shade600,
+                bgColor: Colors.red.shade50,
+                borderColor: Colors.red.shade200,
+                tips: _healthTips.where((t) => t.category == 'avoid').toList(),
+              ),
+
+              // DO tips
+              ..._buildTipSection(
+                title: 'Nên làm',
+                icon: Icons.check_circle_rounded,
+                color: const Color(0xFF28A745),
+                bgColor: const Color(0xFFEEF9F0),
+                borderColor: const Color(0xFFC3E6CB),
+                tips: _healthTips.where((t) => t.category == 'do').toList(),
+              ),
+
+              // WARNING tips
+              ..._buildTipSection(
+                title: 'Cảnh báo quan trọng',
+                icon: Icons.warning_amber_rounded,
+                color: Colors.orange.shade700,
+                bgColor: Colors.orange.shade50,
+                borderColor: Colors.orange.shade200,
+                tips: _healthTips.where((t) => t.category == 'warning').toList(),
+              ),
+            ],
+
+            // Empty state
+            if (_healthTips.isEmpty && !_isAdviceLoading && _adviceError == null && _diagnosisSummary.isEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 60),
+                child: Column(
+                  children: [
+                    Icon(
+                      hasSession ? Icons.hourglass_empty_rounded : Icons.health_and_safety_outlined,
+                      size: 64,
+                      color: Colors.grey.shade300,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      hasSession
+                          ? (isCompleted ? 'Dang chuan bi loi khuyen...' : 'Dang trong phien kham')
+                          : 'Chua co loi khuyen nao',
+                      style: GoogleFonts.lexend(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40),
+                      child: Text(
+                        hasSession
+                            ? (isCompleted
+                                ? 'Loi khuyen se duoc tu dong tao sau khi hoan thanh phien kham.'
+                                : 'Hoan thanh phien kham voi AI Agent 1 de nhan loi khuyen tu dong.')
+                            : 'Hay bat dau kham benh voi AI o tab "Kham benh" de nhan loi khuyen suc khoe ca nhan hoa.',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.lexend(
+                          fontSize: 13,
+                          color: Colors.grey.shade400,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+            const SizedBox(height: 40),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildTipSection({
+    required String title,
+    required IconData icon,
+    required Color color,
+    required Color bgColor,
+    required Color borderColor,
+    required List<HealthTip> tips,
+  }) {
+    if (tips.isEmpty) return [];
+
+    return [
+      Row(
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: GoogleFonts.lexend(
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      ...tips.map((tip) => Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: borderColor),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tip.title,
+              style: GoogleFonts.lexend(
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+                color: color,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              tip.description,
+              style: GoogleFonts.lexend(
+                fontSize: 13,
+                color: Colors.grey.shade800,
+                height: 1.5,
               ),
             ),
           ],
         ),
-    );
+      )),
+      const SizedBox(height: 16),
+    ];
   }
 
+  // ══════════════════════════════════════════════════
+  //  SHARED WIDGETS (Tab 1)
+  // ══════════════════════════════════════════════════
 
   Widget _buildProgressSummary(Color primaryColor) {
     double progress = _calculateProgress();

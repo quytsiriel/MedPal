@@ -13,6 +13,7 @@ import '../services/api_service.dart';
 import '../services/audio_reader.dart';
 import '../services/map_service.dart';
 import '../providers/navigation_provider.dart';
+import '../providers/session_provider.dart';
 
 class SymptomScreen extends ConsumerStatefulWidget {
   const SymptomScreen({super.key});
@@ -61,6 +62,9 @@ class _SymptomScreenState extends ConsumerState<SymptomScreen> {
     try {
       final res = await apiService.startSession();
       _currentSessionId = res["session_id"];
+      
+      // Luu session ID vao global provider de Agent 3 co the doc
+      ref.read(sessionProvider.notifier).setActiveSession(_currentSessionId!);
       
       setState(() {
         _messages.add(
@@ -368,6 +372,10 @@ class _SymptomScreenState extends ConsumerState<SymptomScreen> {
       // Đánh dấu phiên kết thúc nếu complete
       if (stage == 'complete_visit' || stage == 'complete_no_visit') {
         _isCompleted = true;
+        // Thong bao cho global provider de Agent 3 tu dong nhan du lieu
+        if (_currentSessionId != null) {
+          ref.read(sessionProvider.notifier).markCompleted(_currentSessionId!);
+        }
       }
     });
   }
@@ -1106,7 +1114,13 @@ class _SymptomScreenState extends ConsumerState<SymptomScreen> {
   }) {
     return GestureDetector(
       onTap: () {
+        // Capture notifier and router before pop to ensure context validity
+        final navigationNotifier = ref.read(navigationProvider.notifier);
+        
         Navigator.pop(ctx);
+        
+        if (!mounted) return;
+        
         // Dispatch to navigationProvider
         final hospital = Hospital(
           name: name,
@@ -1116,7 +1130,7 @@ class _SymptomScreenState extends ConsumerState<SymptomScreen> {
           lng: lng,
           photoUrl: photoUrl,
         );
-        ref.read(navigationProvider.notifier).setHospital(hospital, null, null);
+        navigationNotifier.setHospital(hospital, null, null);
         context.go('/navigation'); // Chuyển hướng sang Agent 2
       },
       child: Container(

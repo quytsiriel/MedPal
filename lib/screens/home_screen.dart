@@ -12,6 +12,7 @@ import '../services/api_service.dart';
 import '../services/audio_reader.dart';
 import '../services/map_service.dart';
 import '../providers/navigation_provider.dart';
+import '../providers/session_provider.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   final bool isFollowUp;
@@ -79,6 +80,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (mounted) {
         setState(() {
           _currentSessionId = res['session_id'];
+          // Luu session ID vao global provider de Agent 3 co the doc
+          ref.read(sessionProvider.notifier).setActiveSession(_currentSessionId!);
           // Hiển thị câu chào đầu tiên lên bong bóng thoại
           _currentReply = res['message'] ?? "Xin chào!";
         });
@@ -111,9 +114,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       return;
     }
 
+    /* 
     if (inputLower.contains("bệnh viện")) {
       _showHospitalRecommendationsDialog();
     }
+    */
 
     if (widget.isFollowUp) {
        await _handleFollowUpResponse(text);
@@ -138,6 +143,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       setState(() {
         _isLoading = false;
         _currentReply = reply;
+        // Check stage to update UI state if needed
+        if (response['stage'] == 'completed' || response['stage'] == 'complete_visit' || response['stage'] == 'complete_no_visit') {
+          _showHospitalRecommendations = true;
+          // Thong bao cho global provider de Agent 3 tu dong nhan du lieu
+          if (_currentSessionId != null) {
+            ref.read(sessionProvider.notifier).markCompleted(_currentSessionId!);
+          }
+        }
       });
 
       // Nếu Gemini phân loại đây là khẩn cấp
@@ -315,9 +328,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               _currentReply = reply;
             });
             
-            if (response['stage'] == 'completed' || response['stage'] == 'complete_visit') {
-               _showHospitalRecommendationsDialog();
-            }
+             if (response['stage'] == 'completed' || response['stage'] == 'complete_visit') {
+                setState(() => _showHospitalRecommendations = true);
+             }
          }
       }
     } catch (e) {
@@ -429,8 +442,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       setState(() {
         _currentReply =
             "Đừng quá lo lắng. Hãy nghỉ ngơi, uống nhiều nước ấm.\nNếu các triệu chứng kéo dài, hãy xem danh sách phòng khám trên màn hình nhé.";
+        _showHospitalRecommendations = true;
       });
-      _showHospitalRecommendationsDialog();
     }
   }
 
@@ -640,15 +653,39 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                      ),
                    ),
                  )
-               : AnimatedTypewriterText(
-                   text: _currentReply,
-                   textAlign: TextAlign.center,
-                   style: const TextStyle(
-                     fontSize: 20,
-                     fontWeight: FontWeight.bold,
-                     color: Color(0xFF006B70),
-                     height: 1.4,
-                   ),
+               : Column(
+                   mainAxisSize: MainAxisSize.min,
+                   children: [
+                     AnimatedTypewriterText(
+                       text: _currentReply,
+                       textAlign: TextAlign.center,
+                       style: const TextStyle(
+                         fontSize: 20,
+                         fontWeight: FontWeight.bold,
+                         color: Color(0xFF006B70),
+                         height: 1.4,
+                       ),
+                     ),
+                     if (_showHospitalRecommendations) ...[
+                       const SizedBox(height: 16),
+                       SizedBox(
+                         width: double.infinity,
+                         child: ElevatedButton.icon(
+                           onPressed: _showHospitalRecommendationsDialog,
+                           icon: const Icon(Icons.location_on, size: 18),
+                           label: const Text('Tìm bệnh viện gần nhất'),
+                           style: ElevatedButton.styleFrom(
+                             backgroundColor: const Color(0xFF006A71),
+                             foregroundColor: Colors.white,
+                             padding: const EdgeInsets.symmetric(vertical: 12),
+                             shape: RoundedRectangleBorder(
+                               borderRadius: BorderRadius.circular(12),
+                             ),
+                           ),
+                         ),
+                       ),
+                     ],
+                   ],
                  ),
         ),
       ),
@@ -768,7 +805,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }) {
     return GestureDetector(
       onTap: () {
+        // Capture context and ref before pop if safe, or check mounted after
+        final navigationNotifier = ref.read(navigationProvider.notifier);
+        
         Navigator.pop(ctx);
+        
+        if (!mounted) return;
+        
         // Dispatch to navigationProvider
         final hospital = Hospital(
           name: name,
@@ -778,7 +821,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           lng: lng,
           photoUrl: photoUrl,
         );
-        ref.read(navigationProvider.notifier).setHospital(hospital, null, null);
+        navigationNotifier.setHospital(hospital, null, null);
         context.go('/navigation'); // Chuyển hướng sang Agent 2
       },
       child: Container(

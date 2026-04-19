@@ -1,55 +1,56 @@
-import firebase_admin
-from firebase_admin import credentials, firestore
+from google.cloud import firestore
+from google.oauth2 import service_account
 import os
 
-class FakeDocument:
-    def __init__(self, doc_id, data=None):
-        self.doc_id = doc_id
-        self._data = data or {}
-    @property
-    def exists(self): return bool(self._data)
-    def to_dict(self): return self._data
-    def set(self, data): self._data.update(data)
-    def update(self, data): self._data.update(data)
-    def get(self): return self
+# Singleton DB instance
+_db = None
 
-class FakeCollection:
-    def __init__(self, name, store):
-        self.name = name
-        self.store = store
-        if name not in self.store: self.store[name] = {}
-    def document(self, doc_id):
-        if doc_id not in self.store[self.name]:
-            self.store[self.name][doc_id] = FakeDocument(doc_id)
-        return self.store[self.name][doc_id]
 
-class FakeFirestore:
-    def __init__(self): self.store = {}
-    def collection(self, name): return FakeCollection(name, self.store)
-
-_fake_db = FakeFirestore()
-
-# Initialize Firebase Admin
 def init_firebase():
-    if not firebase_admin._apps:
-        try:
-            # Check for a service account key file in the root directory
-            cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "serviceAccountKey.json")
-            if os.path.exists(cred_path):
-                cred = credentials.Certificate(cred_path)
-                firebase_admin.initialize_app(cred)
-            else:
-                # Fallback to application default credentials
-                firebase_admin.initialize_app()
-        except Exception as e:
-            print(f"Warning: Firebase init issue: {e}")
-            
-        
+    """
+    Initialize connection validation.
+    Note: Now using native google.cloud.firestore Client directly.
+    """
+    cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "serviceAccountKey.json")
+
+    if not os.path.exists(cred_path):
+        # Fallback to absolute path relative to this file's parent or project root
+        root_cred = os.path.join(os.path.dirname(os.path.dirname(__file__)), "serviceAccountKey.json")
+        if os.path.exists(root_cred):
+            os.environ["FIREBASE_CREDENTIALS_PATH"] = root_cred
+        else:
+            raise Exception(f"Firebase credentials not found. Hãy đặt serviceAccountKey.json vào root project.")
+
+    print("[OK] Firebase validated service account path")
+
+
 def get_db():
+    """
+    Get Firestore client (singleton) supporting named database.
+    """
+    global _db
+
+    if _db:
+        return _db
+
     try:
-        if not firebase_admin._apps:
-            init_firebase()
-        return firestore.client(database_id="medpal-dev-493103")
+        init_firebase()
+        cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "serviceAccountKey.json")
+        if not os.path.exists(cred_path):
+            cred_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "serviceAccountKey.json")
+            
+        cred = service_account.Credentials.from_service_account_file(cred_path)
+        _db = firestore.Client(project="medpal-dev-493103", credentials=cred, database="medpal-dev-493103")
+        print("Firestore client connected (medpal-dev-493103)")
+        return _db
     except Exception as e:
-        print("MOCKING FIREBASE: Using in-memory storage (no serviceAccountKey.json found)")
-        return _fake_db
+        raise Exception(f"Cannot connect to Firestore: {e}")
+
+
+# Optional: test connection quickly
+def test_connection():
+    db = get_db()
+    test_ref = db.collection("test").document("ping")
+
+    test_ref.set({"status": "ok"})
+    print("Firestore write test OK")
