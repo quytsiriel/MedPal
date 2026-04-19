@@ -2,36 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 class ScaffoldWithBottomNav extends StatelessWidget {
-  final Widget child;
+  final StatefulNavigationShell navigationShell;
 
-  const ScaffoldWithBottomNav({super.key, required this.child});
-
-  int _calculateSelectedIndex(BuildContext context) {
-    final String location = GoRouterState.of(context).uri.path;
-    if (location == '/' || location == '/symptoms') {
-      return 0; // Khám bệnh
-    }
-    if (location.startsWith('/navigation')) {
-      return 1; // Chỉ đường
-    }
-    if (location.startsWith('/prescriptions')) {
-      return 2; // Đơn thuốc
-    }
-    return 0;
-  }
+  const ScaffoldWithBottomNav({super.key, required this.navigationShell});
 
   void _onItemTapped(int index, BuildContext context) {
-    switch (index) {
-      case 0:
-        context.go('/');
-        break;
-      case 1:
-        context.go('/navigation');
-        break;
-      case 2:
-        context.go('/prescriptions');
-        break;
-    }
+    navigationShell.goBranch(
+      index,
+      initialLocation: index == navigationShell.currentIndex,
+    );
   }
 
   @override
@@ -89,9 +68,9 @@ class ScaffoldWithBottomNav extends StatelessWidget {
           ),
         ),
       ),
-      body: child,
+      body: navigationShell,
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _calculateSelectedIndex(context),
+        currentIndex: navigationShell.currentIndex,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: const Color(0xFF006B70),
         unselectedItemColor: Colors.grey,

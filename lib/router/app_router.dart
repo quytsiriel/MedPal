@@ -8,40 +8,46 @@ import '../screens/scaffold_with_bottom_nav.dart';
 
 // Global key for root navigator
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
-final _shellNavigatorKey = GlobalKey<NavigatorState>();
 
 final appRouter = GoRouter(
   initialLocation: '/',
   navigatorKey: _rootNavigatorKey,
   routes: [
-    ShellRoute(
-      navigatorKey: _shellNavigatorKey,
-      builder: (context, state, child) {
-        return ScaffoldWithBottomNav(child: child);
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, navigationShell) {
+        return ScaffoldWithBottomNav(navigationShell: navigationShell);
       },
-      routes: [
-        GoRoute(
-          path: '/',
-          parentNavigatorKey: _shellNavigatorKey,
-          builder: (context, state) {
-            final followup = state.uri.queryParameters['followup'] == 'true';
-            return HomeScreen(isFollowUp: followup);
-          },
+      branches: [
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/',
+              builder: (context, state) {
+                final followup = state.uri.queryParameters['followup'] == 'true';
+                return HomeScreen(isFollowUp: followup);
+              },
+            ),
+            GoRoute(
+              path: '/symptoms',
+              builder: (context, state) => const SymptomScreen(),
+            ),
+          ],
         ),
-        GoRoute(
-          path: '/symptoms',
-          parentNavigatorKey: _shellNavigatorKey,
-          builder: (context, state) => const SymptomScreen(),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/navigation',
+              builder: (context, state) => const NavigationScreen(),
+            ),
+          ],
         ),
-        GoRoute(
-          path: '/navigation',
-          parentNavigatorKey: _shellNavigatorKey,
-          builder: (context, state) => const NavigationScreen(),
-        ),
-        GoRoute(
-          path: '/prescriptions',
-          parentNavigatorKey: _shellNavigatorKey,
-          builder: (context, state) => const PrescriptionScreen(),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/prescriptions',
+              builder: (context, state) => const PrescriptionScreen(),
+            ),
+          ],
         ),
       ],
     ),
