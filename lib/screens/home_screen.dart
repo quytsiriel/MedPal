@@ -55,8 +55,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void didUpdateWidget(HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // When returning to Khám bệnh tab after finishing Navigation
+    if (!oldWidget.isFollowUp && widget.isFollowUp) {
+      setState(() {
+        _isLoading = false;
+        _showHospitalRecommendations = false;
+        _currentReply = "Chúc mừng bạn đã đến nơi.\nBác sĩ có yêu cầu bạn tới khoa nào khác không?";
+      });
+    }
     // If we were in follow-up mode and now we are not, reset the session
-    if (oldWidget.isFollowUp && !widget.isFollowUp) {
+    else if (oldWidget.isFollowUp && !widget.isFollowUp) {
       _startSession();
     }
   }
@@ -207,6 +215,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         await Future.delayed(const Duration(seconds: 2));
         if (mounted) {
           context.go('/navigation');
+          // Reset câu thoại ngay lập tức để khi ứng dụng văng ngược lại từ Agent 2 sẽ không bị kẹt câu cũ
+          setState(() {
+            _currentReply = "Chúc mừng bạn đã đến nơi.\nBác sĩ có yêu cầu bạn tới khoa nào khác không?";
+          });
         }
       } else {
         if (mounted) {
