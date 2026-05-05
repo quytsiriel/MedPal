@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
+import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'api_service.dart';
 
 /// Lightweight data class for a hospital result
@@ -12,6 +13,7 @@ class Hospital {
   final double lat;
   final double lng;
   final String? photoUrl;
+  final String? placeId;
 
   const Hospital({
     required this.name,
@@ -20,6 +22,7 @@ class Hospital {
     required this.lat,
     required this.lng,
     this.photoUrl,
+    this.placeId,
   });
 }
 
@@ -45,16 +48,20 @@ class MapService {
       return null;
     }
 
-    // Use high accuracy for APK. Web medium is faster and often more reliable for browsers.
     try {
       Position position = await Geolocator.getCurrentPosition(
-        locationSettings: kIsWeb 
-          ? const LocationSettings(accuracy: LocationAccuracy.medium)
-          : const LocationSettings(accuracy: LocationAccuracy.high)
-      ).timeout(const Duration(seconds: 10));
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 5),
+        )
+      );
       
-      debugPrint('[MapService] GPS fixed: ${position.latitude}, ${position.longitude}');
-      return (lat: position.latitude, lng: position.longitude);
+      if (position.latitude != 0.0 && position.longitude != 0.0) {
+        debugPrint('[MapService] GPS fixed: ${position.latitude}, ${position.longitude}, acc: ${position.accuracy}');
+        return (lat: position.latitude, lng: position.longitude);
+      } else {
+        debugPrint('[MapService] GPS fixed but (0,0)');
+      }
     } catch (e) {
       debugPrint('[MapService] Fresh fix failed: $e');
       if (!kIsWeb) {
@@ -111,6 +118,7 @@ class MapService {
               lat: geo['lat'],
               lng: geo['lng'],
               photoUrl: photoUrl,
+              placeId: p['place_id'],
             );
           }).toList();
         }
@@ -128,9 +136,54 @@ class MapService {
 
   List<Hospital> _fallback(double userLat, double userLng) {
     return [
-      Hospital(name: 'Bệnh viện Bạch Mai', address: '78 Giải Phóng, Hà Nội', openStatus: 'Mở cửa 24/7', lat: 21.0063, lng: 105.8427),
-      Hospital(name: 'Bệnh viện Việt Đức', address: '40 Tràng Thi, Hà Nội', openStatus: 'Mở cửa 24/7', lat: 21.0287, lng: 105.8471),
+      Hospital(name: 'Bệnh viện Bạch Mai', address: '78 Giải Phóng, Hà Nội', openStatus: 'Mở cửa 24/7', lat: 21.0063, lng: 105.8427, placeId: 'ChIJT6p98rOrNTERE0yU2L5E28o'),
+      Hospital(name: 'Bệnh viện Việt Đức', address: '40 Tràng Thi, Hà Nội', openStatus: 'Mở cửa 24/7', lat: 21.0287, lng: 105.8471, placeId: 'ChIJj7O-rF2pNTERxR_U8iXv1Uo'),
     ];
+  }
+
+  // 4. Get Directions using Google Maps Directions API
+  Future<Map<String, dynamic>?> getDirections(double originLat, double originLng, String destinationPlaceId) async {
+    final String urlStr =
+        "https://maps.googleapis.com/maps/api/directions/json"
+        "?origin=$originLat,$originLng"
+        "&destination=place_id:$destinationPlaceId"
+        "&mode=driving"
+        "&language=vi"
+        "&key=$_apiKey";
+
+    final targetUrl = _getProxiedUrl(urlStr);
+
+    try {
+      final response = await http.get(Uri.parse(targetUrl)).timeout(const Duration(seconds: 15));
+      if (response.statusCode == 200) {
+        final body = json.decode(utf8.decode(response.bodyBytes));
+        if (body['status'] == 'OK' && (body['routes'] as List).isNotEmpty) {
+          final route = body['routes'][0];
+          final polylineStr = route['overview_polyline']['points'];
+          final leg = route['legs'][0];
+          final steps = leg['steps'];
+          
+          List<({double lat, double lng})> points = _decodePolyline(polylineStr);
+          
+          return {
+            'points': points,
+            'steps': steps,
+            'distance': leg['distance']['text'],
+            'duration': leg['duration']['text'],
+            'end_address': leg['end_address'],
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint('[MapService] getDirections error: $e');
+    }
+    return null;
+  }
+
+  // Polyline decoding algorithm using robust package
+  List<({double lat, double lng})> _decodePolyline(String encoded) {
+    final points = PolylinePoints.decodePolyline(encoded);
+    return points.map((p) => (lat: p.latitude, lng: p.longitude)).toList();
   }
 }
 

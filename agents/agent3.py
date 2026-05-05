@@ -10,6 +10,10 @@ class PrescriptionRequest(BaseModel):
     session_id: str
     image_base64: str
 
+class SaveDiagnosisRequest(BaseModel):
+    session_id: str
+    diagnosis: str
+
 # Giữ nguyên System Prompt đã thống nhất ở trên để parse dữ liệu
 SYSTEM_PROMPT = """
 Bạn là một trợ lý Y khoa AI (Agent 3) chuyên phân tích thông tin từ văn bản đơn thuốc (OCR). 
@@ -98,9 +102,9 @@ def scan_prescription(request: PrescriptionRequest):
 class HealthAdviceRequest(BaseModel):
     session_id: str
 
-HEALTH_ADVICE_PROMPT = """Benh nhan co trieu chung: {symptoms}
+HEALTH_ADVICE_PROMPT = """Benh nhan co trieu chung va thong tin tu bac si: {symptoms}
 
-Hay dua ra 6 loi khuyen cham soc suc khoe tai nha dang JSON. CHI tra ve JSON, KHONG giai thich them:
+Hay phan tich cac trieu chung va chan doan tren, ket hop voi kien thuc y khoa cua ban (MedGemma) de dua ra 6 loi khuyen cham soc suc khoe tai nha dang JSON. CHI tra ve JSON, KHONG giai thich them:
 {{"diagnosis_summary":"Tom tat 1 cau","tips":[{{"category":"avoid","title":"..","description":".."}},{{"category":"avoid","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"warning","title":"..","description":".."}}]}}
 
 Quy tac: 2 muc avoid (nen tranh), 3 muc do (nen lam), 1 muc warning. KHONG ke thuoc. Tieng Viet co dau."""
@@ -145,8 +149,32 @@ def _extract_patient_summary(session_data: dict) -> str:
             seen.add(p_clean.lower())
             unique.append(p_clean)
             
-    return ", ".join(unique[:8])
+    # Include doctor's diagnosis if available
+    doctor_diagnosis = session_data.get("doctor_diagnosis")
+    if doctor_diagnosis:
+        unique.append(f"Chan doan cua bac si: {doctor_diagnosis}")
+            
+    return ", ".join(unique[:10])
 
+@router.post("/save-diagnosis")
+def save_diagnosis(request: SaveDiagnosisRequest):
+    """Save the doctor's diagnosis to the session for later use in health advice."""
+    try:
+        db = get_db()
+        doc_ref = db.collection("sessions").document(request.session_id)
+        if doc_ref.get().exists:
+            # We clear any existing health_advice so that it forces a re-generation 
+            # with the new doctor diagnosis!
+            doc_ref.set({
+                "doctor_diagnosis": request.diagnosis,
+                "health_advice": None  # Invalidate cache
+            }, merge=True)
+            return {"status": "success", "message": "Da luu chan doan cua bac si."}
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
+    except Exception as e:
+        print(f"Agent 3 Error (save_diagnosis): {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/health-advice")
 def get_health_advice(request: HealthAdviceRequest):
