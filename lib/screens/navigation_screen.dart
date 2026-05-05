@@ -9,6 +9,11 @@ import '../services/map_service.dart';
 import '../services/places_service.dart';
 import '../services/directions_service.dart';
 import '../services/location_service.dart';
+import 'dart:convert';
+import 'package:record/record.dart';
+import '../services/audio_reader.dart';
+import '../services/api_service.dart';
+import '../providers/session_provider.dart';
 
 class NavigationScreen extends ConsumerStatefulWidget {
   const NavigationScreen({super.key});
@@ -32,10 +37,32 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   LatLng? _userPos;
   List<Hospital> _nearby = [];
 
+  bool _isPostExamPhase = false;
+  int _mascotState = 0; // 0: none, 1: ask dept, 2: ask diagnosis
+  bool _isRecording = false;
+  Duration _recordDuration = Duration.zero;
+  Timer? _recordTimer;
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  String _mascotReply = "Bác sĩ có những chẩn đoán như thế nào?";
+  bool _isProcessingMic = false;
+  StateSetter? _modalSetState;
+  final TextEditingController _deptController = TextEditingController();
+  final TextEditingController _diagnosisController = TextEditingController();
+
+  void _updateMascotState(VoidCallback fn) {
+    fn();
+    if (mounted) setState(() {});
+    if (_modalSetState != null) _modalSetState!(() {});
+  }
+
   @override
   void dispose() {
     _posSub?.cancel();
     _mapCtrl?.dispose();
+    _recordTimer?.cancel();
+    _audioRecorder.dispose();
+    _deptController.dispose();
+    _diagnosisController.dispose();
     super.dispose();
   }
 
@@ -123,7 +150,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         loc.latitude, loc.longitude, hospital.lat, hospital.lng,
       );
       if (distToDest < 50) {
-        _showArrivalFollowUp();
+        _handleArrival();
       }
     });
   }
@@ -147,116 +174,60 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     setState(() { _isNavigating = false; _route = null; _stepIdx = 0; });
   }
 
-  /// Bottom sheet hỏi tên khoa → gọi setDepartmentFromFollowUp() đã có sẵn
-  void _showArrivalFollowUp() {
+  void _handleArrival() {
     _posSub?.cancel();
-    final ctrl = TextEditingController();
+    ref.read(navigationProvider.notifier).setArrived(true);
+    _isPostExamPhase = true;
+    _showMascotModal("Bạn đã đến Khoa Khám bệnh.\nBác sĩ có yêu cầu bạn đến khoa nào nữa không?");
+  }
+
+  void _showMascotModal(String initialMsg) {
+    _mascotState = 1;
+    _mascotReply = initialMsg;
+    
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-            ),
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40, height: 4,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFDDE4E6),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            _modalSetState = setModalState;
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF4FAFA),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
                 ),
-                const SizedBox(height: 20),
-                Row(children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE8F5F5),
-                      borderRadius: BorderRadius.circular(12),
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                    Center(
+                      child: Container(
+                        width: 40, height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDDE4E6),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
                     ),
-                    child: const Icon(Icons.local_hospital_rounded, color: brand, size: 22),
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Bạn đã đến bệnh viện! 🎉',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50))),
-                        SizedBox(height: 2),
-                        Text('Nhập tên khoa để được chỉ đường trong bệnh viện',
-                          style: TextStyle(fontSize: 12, color: Color(0xFF95A5A6))),
-                      ],
-                    ),
-                  ),
-                ]),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: ctrl,
-                  autofocus: true,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: InputDecoration(
-                    hintText: 'VD: Khoa Nội, Khoa Cấp cứu...',
-                    prefixIcon: const Icon(Icons.search_rounded, color: brand),
-                    filled: true,
-                    fillColor: const Color(0xFFF4FAFA),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide.none,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: brand, width: 1.5),
-                    ),
-                  ),
-                  onSubmitted: (val) => _submitDepartment(ctx, ctrl),
+                    _buildPostExamContent(),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _submitDepartment(ctx, ctrl),
-                    icon: const Icon(Icons.near_me_rounded, color: Colors.white),
-                    label: const Text('Chỉ đường vào trong',
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: brand,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      elevation: 3,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      // Bỏ qua hỏi khoa, vào thẳng luồng mặc định
-                      ref.read(navigationProvider.notifier).setArrived(true);
-                    },
-                    child: const Text('Bỏ qua, tôi tự tìm được',
-                      style: TextStyle(color: Color(0xFF95A5A6), fontSize: 13)),
-                  ),
-                ),
-              ],
-            ),
-          ),
+                ),  // SingleChildScrollView
+              ),
+            );
+          }
         );
-      },
-    );
+      }
+    ).whenComplete(() {
+      _modalSetState = null;
+      _isPostExamPhase = false;
+      _mascotState = 0;
+    });
   }
 
   Future<void> _submitDepartment(BuildContext ctx, TextEditingController ctrl) async {
@@ -271,6 +242,50 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
           backgroundColor: Colors.orange.shade700,
         ),
       );
+    }
+  }
+
+  Future<void> _submitDeptFromText() async {
+    final dept = _deptController.text.trim();
+    if (dept.isEmpty) return;
+    _deptController.clear();
+    _updateMascotState(() => _mascotReply = 'Đang tìm đường đến khoa...');
+    final ok = await ref.read(navigationProvider.notifier).setDepartmentFromFollowUp(dept);
+    if (ok) {
+      _updateMascotState(() {
+        _isPostExamPhase = false;
+        _mascotState = 0;
+      });
+      if (mounted) Navigator.pop(context);
+    } else {
+      _updateMascotState(
+        () => _mascotReply = 'Không tìm thấy khoa "$dept". Vui lòng nhập lại.',
+      );
+    }
+  }
+
+  Future<void> _submitDiagnosisFromText() async {
+    final diagnosis = _diagnosisController.text.trim();
+    if (diagnosis.isEmpty) return;
+    _diagnosisController.clear();
+    _updateMascotState(() => _mascotReply = 'Đang lưu chẩn đoán...');
+
+    try {
+      final sessionId = ref.read(sessionProvider).lastSessionId;
+      if (sessionId != null) {
+        await apiService.saveDiagnosis(sessionId, diagnosis);
+      }
+      if (mounted) {
+        ref.read(navigationProvider.notifier).setArrived(false);
+        _updateMascotState(() {
+          _isPostExamPhase = false;
+          _mascotState = 0;
+        });
+        Navigator.pop(context);
+        context.go('/prescriptions');
+      }
+    } catch (e) {
+      _updateMascotState(() => _mascotReply = 'Lỗi lưu chẩn đoán: $e');
     }
   }
 
@@ -494,7 +509,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                   Expanded(
                     flex: 2,
                     child: ElevatedButton.icon(
-                      onPressed: _showArrivalFollowUp,
+                      onPressed: _handleArrival,
                       icon: const Icon(Icons.check_circle_rounded, color: Colors.white),
                       label: const Text('Tôi đã đến',
                         style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -638,7 +653,8 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
             child: ElevatedButton.icon(
               onPressed: () {
                 ref.read(navigationProvider.notifier).markCurrentDeptAsVisited();
-                _showFollowUpDepartment(navState.targetDepartment);
+                _isPostExamPhase = true;
+                _showMascotModal("Bạn đã đến ${navState.targetDepartment ?? 'Khoa'}, Bác sĩ có yêu cầu bạn đến khoa nào nữa không?");
               },
               icon: const Icon(Icons.check_circle, color: Colors.white, size: 28),
               label: Text(() {
@@ -754,11 +770,27 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                 child: TextButton.icon(
                   onPressed: () {
                     Navigator.pop(ctx);
+                    setState(() {
+                      _isPostExamPhase = true;
+                      _mascotReply = "Bác sĩ có những chẩn đoán như thế nào?";
+                    });
+                  },
+                  icon: const Icon(Icons.medical_services_rounded, size: 18, color: brand),
+                  label: const Text('Tôi đã khám xong toàn bộ',
+                    style: TextStyle(color: brand, fontSize: 14, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  onPressed: () {
+                    Navigator.pop(ctx);
                     ref.read(navigationProvider.notifier).setArrived(false);
                     context.go('/');
                   },
                   icon: const Icon(Icons.home_rounded, size: 18, color: Color(0xFF95A5A6)),
-                  label: const Text('Không, kết thúc hành trình',
+                  label: const Text('Không, quay về trang chủ',
                     style: TextStyle(color: Color(0xFF95A5A6), fontSize: 13)),
                 ),
               ),
@@ -767,6 +799,348 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
         ),
       ),
     );
+  }
+
+  // ==========================================
+  // POST-EXAM PHASE WIDGETS & LOGIC
+  // ==========================================
+  
+  Widget _buildPostExamContent() {
+    return Column(
+      children: [
+        const SizedBox(height: 16),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24.0),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24.0),
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 15, offset: const Offset(0, 5))],
+            ),
+            child: Text(
+              _mascotReply,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: brand, height: 1.4),
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        _buildRobotMascot(context),
+        const SizedBox(height: 24),
+        Text(
+          _isRecording ? 'Nhấn lại trái tim để gửi' : 'Nhấn vào trái tim để bắt đầu nói',
+          style: TextStyle(
+            fontSize: 16,
+            color: _isRecording ? Colors.red : const Color(0xFF6B7B80),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 24),
+        if (_mascotState == 1) ...[
+          // ── Text input for department (tab-1 style) ──
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _deptController,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: InputDecoration(
+                      hintText: 'Nhập tên khoa...',
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: const BorderSide(color: Color(0xFFE5F1F1), width: 2),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: const BorderSide(color: Color(0xFFE5F1F1), width: 2),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: const BorderSide(color: brand, width: 2),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    ),
+                    onSubmitted: (_) => _submitDeptFromText(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  decoration: const BoxDecoration(
+                    color: brand,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.near_me_rounded, color: Colors.white),
+                    onPressed: _submitDeptFromText,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // ── Skip to diagnosis ──
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  _updateMascotState(() {
+                    _mascotState = 2;
+                    _mascotReply = "Bác sĩ có những chẩn đoán như thế nào?";
+                  });
+                },
+                icon: const Icon(Icons.medical_services_rounded, color: brand),
+                label: const Text('Tôi đã khám xong tất cả',
+                    style: TextStyle(color: brand, fontSize: 16, fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: brand, width: 1.5),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (_mascotState == 2) ...[
+          // ── Text input for diagnosis (tab-1 style) ──
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _diagnosisController,
+                    textCapitalization: TextCapitalization.sentences,
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    decoration: InputDecoration(
+                      hintText: 'Nhập chẩn đoán của bác sĩ...',
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: const BorderSide(color: Color(0xFFE5F1F1), width: 2),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: const BorderSide(color: Color(0xFFE5F1F1), width: 2),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: const BorderSide(color: brand, width: 2),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  decoration: const BoxDecoration(
+                    color: brand,
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.send_rounded, color: Colors.white),
+                    onPressed: _submitDiagnosisFromText,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+
+  Widget _buildRobotMascot(BuildContext context) {
+    // -------------------------------------------------------------
+    // Tinh chỉnh kích thước và vị trí của trái tim tại đây:
+    const double heartWidth = 350.0; // Chiều ngang của trái tim
+    const double heartHeight = 350.0; // Chiều cao của trái tim
+    const double heartBottomOffset = -5; // Độ xa tính từ mép dưới của nhân vật
+    // -------------------------------------------------------------
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        // Glow Background
+        Container(
+          width: 250,
+          height: 250,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF96F1FA).withOpacity(0.4),
+                blurRadius: 60,
+                spreadRadius: 20,
+              ),
+            ],
+          ),
+        ),
+        // Mascot Image
+        Image.asset(
+          'assets/mascot.png',
+          width: 320,
+          height: 320,
+          fit: BoxFit.contain,
+        ),
+
+        // 5. Nút Mic - Bắt sự kiện Nhấn nhả sử dụng ảnh Assets (Tắt viền trắng)
+        Positioned(
+          bottom: heartBottomOffset, // Vị trí trái tim lên xuống
+          child: GestureDetector(
+            onTap: _toggleRecording,
+            child: SizedBox(
+              width: heartWidth,
+              height: heartHeight,
+              child: AnimatedCrossFade(
+                firstChild: Image.asset(
+                  'assets/heart_normal.png',
+                  fit: BoxFit.contain,
+                  width: heartWidth,
+                  height: heartHeight,
+                ),
+                secondChild: Image.asset(
+                  'assets/heart_pressed.png',
+                  fit: BoxFit.contain,
+                  width: heartWidth,
+                  height: heartHeight,
+                ),
+                crossFadeState: _isRecording
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                duration: const Duration(milliseconds: 150),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _toggleRecording() async {
+    if (_isProcessingMic) return;
+    _isProcessingMic = true;
+    try {
+      if (_isRecording) {
+        await _stopRecordingAndSend();
+      } else {
+        await _startRecording();
+      }
+    } finally {
+      _isProcessingMic = false;
+    }
+  }
+
+  Future<void> _startRecording() async {
+    try {
+      if (await _audioRecorder.hasPermission()) {
+        final filePath = await createRecordingPath();
+        final config = const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        );
+        await _audioRecorder.start(config, path: filePath);
+        _recordTimer?.cancel();
+        _updateMascotState(() {
+          _isRecording = true;
+          _recordDuration = Duration.zero;
+          _mascotReply = '🎤 Đang ghi âm... Nhấn lại trái tim để gửi.';
+        });
+        _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          final m = _recordDuration.inMinutes.remainder(60).toString().padLeft(2, '0');
+          final s = _recordDuration.inSeconds.remainder(60).toString().padLeft(2, '0');
+          _updateMascotState(() {
+            _recordDuration += const Duration(seconds: 1);
+            _mascotReply = '🎤 Đang ghi âm... $m:$s\nNhấn lại trái tim để gửi.';
+          });
+        });
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cần cấp quyền microphone để ghi âm.')));
+        }
+      }
+    } catch (e) {
+      _updateMascotState(() => _mascotReply = 'Lỗi ghi âm: $e');
+    }
+  }
+
+  Future<void> _stopRecordingAndSend() async {
+    _recordTimer?.cancel();
+    final path = await _audioRecorder.stop();
+    _updateMascotState(() {
+      _isRecording = false;
+      _recordDuration = Duration.zero;
+      _mascotReply = 'Đang nhận dạng giọng nói...';
+    });
+
+    if (path == null) return;
+
+    try {
+      final bytes = await readRecordedAudio(path);
+      final base64Audio = base64Encode(bytes);
+
+      final response = await apiService.transcribe(base64Audio);
+      final transcript = response['transcript'] as String?;
+      
+      if (transcript != null && transcript.isNotEmpty) {
+        if (_mascotState == 1) {
+           _updateMascotState(() => _mascotReply = 'Đang tìm đường đến khoa...');
+           final ok = await ref.read(navigationProvider.notifier).setDepartmentFromFollowUp(transcript);
+           if (ok) {
+               _updateMascotState(() {
+                 _isPostExamPhase = false;
+                 _mascotState = 0;
+               });
+               if (mounted) Navigator.pop(context); // Close the bottom sheet
+           } else {
+               _updateMascotState(() => _mascotReply = 'Không tìm thấy khoa "$transcript". Vui lòng nói lại.');
+           }
+        } else if (_mascotState == 2) {
+          _updateMascotState(() {
+            _mascotReply = 'Đang lưu chẩn đoán...';
+          });
+          
+          final sessionId = ref.read(sessionProvider).lastSessionId;
+          if (sessionId != null) {
+            await apiService.saveDiagnosis(sessionId, transcript);
+            if (mounted) {
+               ref.read(navigationProvider.notifier).setArrived(false);
+               _updateMascotState(() {
+                 _isPostExamPhase = false;
+                 _mascotState = 0;
+               });
+               Navigator.pop(context); // Close the bottom sheet
+               context.go('/prescriptions');
+            }
+          } else {
+            _updateMascotState(() {
+               _mascotReply = 'Lỗi: Không tìm thấy phiên khám hiện tại.';
+            });
+          }
+        }
+      } else {
+        _updateMascotState(() {
+          _mascotReply = 'Không nghe rõ, bạn có thể nói lại không?';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _mascotReply = 'Lỗi nhận dạng: $e';
+        });
+      }
+    }
   }
 
   Future<void> _submitFollowUpDept(BuildContext ctx, TextEditingController ctrl) async {

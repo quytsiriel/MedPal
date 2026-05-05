@@ -249,7 +249,6 @@ class ApiService {
       return jsonDecode(utf8.decode(response.bodyBytes));
     }
 
-    // Extract detail error
     String detail = '';
     try {
       final errorBody = jsonDecode(utf8.decode(response.bodyBytes));
@@ -258,6 +257,23 @@ class ApiService {
       detail = response.body;
     }
     throw Exception('Health advice failed (${response.statusCode}): $detail');
+  }
+
+  /// [POST] /agent3/save-diagnosis
+  /// Luu ket qua chan doan cua bac si do user doc vao
+  Future<void> saveDiagnosis(String sessionId, String diagnosis) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/agent3/save-diagnosis'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        "session_id": sessionId,
+        "diagnosis": diagnosis,
+      }),
+    ).timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to save diagnosis (${response.statusCode}): ${response.body}');
+    }
   }
 }
 
