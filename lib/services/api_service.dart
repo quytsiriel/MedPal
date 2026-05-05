@@ -46,20 +46,22 @@ class ApiService {
       throw Exception('Missing both message and voice_base64');
     }
 
-    final response = await http.post(
-      Uri.parse('$baseUrl/agent1/chat'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        "session_id": sessionId,
-        if (message != null) "message": message,
-        if (voiceBase64 != null) "voice_base64": voiceBase64,
-      })
-    );
-    
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/agent1/chat'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            "session_id": sessionId,
+            if (message != null) "message": message,
+            if (voiceBase64 != null) "voice_base64": voiceBase64,
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
     }
-    
+
     // Trích xuất detail từ backend error response
     String detail = '';
     try {
@@ -70,7 +72,7 @@ class ApiService {
     }
     throw Exception('Chat failed (${response.statusCode}): $detail');
   }
-  
+
   /// [POST] /agent1/transcribe
   /// Chỉ nhận diện giọng nói (không cần session ID). Dùng cho transcription-only cases.
   Future<Map<String, dynamic>> transcribe(String voiceBase64) async {
@@ -78,15 +80,18 @@ class ApiService {
       Uri.parse('$baseUrl/agent1/transcribe'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        "session_id": "transcribe_only", // Backend doesn't use it, but ChatRequest schema might expect it
+        "session_id":
+            "transcribe_only", // Backend doesn't use it, but ChatRequest schema might expect it
         "voice_base64": voiceBase64,
-      })
+      }),
     );
-    
+
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
     }
-    throw Exception('Transcription failed (${response.statusCode}): ${response.body}');
+    throw Exception(
+      'Transcription failed (${response.statusCode}): ${response.body}',
+    );
   }
 
   // ==========================================
@@ -95,22 +100,20 @@ class ApiService {
 
   Future<List<Hospital>> getNearbyHospitals(double lat, double lng) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/agent2/hospitals'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "lat": lat,
-          "lng": lng,
-          "radius": 5000,
-        }),
-      ).timeout(const Duration(seconds: 15));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/agent2/hospitals'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({"lat": lat, "lng": lng, "radius": 5000}),
+          )
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(utf8.decode(response.bodyBytes));
         return data.map((json) {
           String? photoUrl = json['photo_url'];
           if (photoUrl != null && kIsWeb) {
-             photoUrl = "https://corsproxy.io/?${Uri.encodeComponent(photoUrl)}";
+            photoUrl = "https://corsproxy.io/?${Uri.encodeComponent(photoUrl)}";
           }
           return Hospital(
             name: json['name'],
@@ -130,16 +133,21 @@ class ApiService {
     return mapService.getNearbyHospitals(lat, lng);
   }
 
-  Future<Map<String, dynamic>> navigate(String sessionId, String hospitalName) async {
+  Future<Map<String, dynamic>> navigate(
+    String sessionId,
+    String hospitalName,
+  ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/agent2/navigate'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "session_id": sessionId,
-          "hospital_name": hospitalName,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/agent2/navigate'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              "session_id": sessionId,
+              "hospital_name": hospitalName,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
@@ -147,34 +155,45 @@ class ApiService {
     } catch (_) {}
 
     return {
-      "steps": ["Đi thẳng vào cổng chính", "Hỏi quầy lễ tân để được hướng dẫn thêm"],
+      "steps": [
+        "Đi thẳng vào cổng chính",
+        "Hỏi quầy lễ tân để được hướng dẫn thêm",
+      ],
     };
   }
 
-  Future<Map<String, dynamic>> updateDepartment(String sessionId, String department) async {
+  Future<Map<String, dynamic>> updateDepartment(
+    String sessionId,
+    String department,
+  ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/agent2/update-dept'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "session_id": sessionId,
-          "department": department,
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/agent2/update-dept'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              "session_id": sessionId,
+              "department": department,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
       }
     } catch (_) {}
 
-    return {"status": "default", "next_steps": ["Theo sau biển chỉ dẫn"]};
+    return {
+      "status": "default",
+      "next_steps": ["Theo sau biển chỉ dẫn"],
+    };
   }
 
   Future<String> reverseGeocode(double lat, double lng) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/agent2/geocoding?lat=$lat&lng=$lng'),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(Uri.parse('$baseUrl/agent2/geocoding?lat=$lat&lng=$lng'))
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -188,9 +207,13 @@ class ApiService {
 
   Future<Map<String, dynamic>> getBuildingCoords(String department) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/agent2/building-coords?department=${Uri.encodeComponent(department)}'),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(
+            Uri.parse(
+              '$baseUrl/agent2/building-coords?department=${Uri.encodeComponent(department)}',
+            ),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
@@ -205,16 +228,21 @@ class ApiService {
   // AGENT 3: PRESCRIPTION OCR
   // ==========================================
 
-  Future<Map<String, dynamic>> scanPrescription(String sessionId, String imageBase64) async {
+  Future<Map<String, dynamic>> scanPrescription(
+    String sessionId,
+    String imageBase64,
+  ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/agent3/prescription'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "session_id": sessionId,
-          "image_base64": imageBase64,
-        }),
-      ).timeout(const Duration(seconds: 20));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/agent3/prescription'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              "session_id": sessionId,
+              "image_base64": imageBase64,
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
 
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
@@ -223,20 +251,21 @@ class ApiService {
 
     return {
       "medications": [],
-      "summary": "Hiện tại không thể phân tích đơn thuốc. Vui lòng thử lại sau."
+      "summary":
+          "Hiện tại không thể phân tích đơn thuốc. Vui lòng thử lại sau.",
     };
   }
 
   /// [POST] /agent3/health-advice
   /// Nạp dữ liệu từ Firebase session và gọi MedGemma để tạo lời khuyên sức khỏe
   Future<Map<String, dynamic>> getHealthAdvice(String sessionId) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/agent3/health-advice'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        "session_id": sessionId,
-      }),
-    ).timeout(const Duration(seconds: 60));
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/agent3/health-advice'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({"session_id": sessionId}),
+        )
+        .timeout(const Duration(seconds: 60));
 
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
@@ -254,5 +283,5 @@ class ApiService {
   }
 }
 
-// Global instance 
+// Global instance
 final apiService = ApiService();

@@ -20,4 +20,4 @@ class ChatMessage {
     this.record,
     this.recommendedDept,
   });
-}
+} 

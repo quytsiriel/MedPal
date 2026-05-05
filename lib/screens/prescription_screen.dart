@@ -104,9 +104,7 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
         name: 'Vitamin C 1000mg',
         dosage: '1 viên sủi',
         icon: 'effervescent',
-        schedule: [
-          ScheduleItem(time: '09:00', isTaken: false),
-        ],
+        schedule: [ScheduleItem(time: '09:00', isTaken: false)],
       ),
     ];
   }
@@ -135,11 +133,16 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Đang dùng AI để phân tích đơn thuốc...', style: GoogleFonts.lexend()),
+              content: Text(
+                'Đang dùng AI để phân tích đơn thuốc...',
+                style: GoogleFonts.lexend(),
+              ),
               backgroundColor: Colors.blueGrey,
               behavior: SnackBarBehavior.floating,
               duration: const Duration(seconds: 2),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
           );
         }
@@ -148,22 +151,31 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
         final base64Image = base64Encode(bytes);
 
         // Fetch from Agent 3 API
-        final result = await apiService.scanPrescription("user_session", base64Image);
+        final result = await apiService.scanPrescription(
+          "user_session",
+          base64Image,
+        );
 
         if (mounted) {
           setState(() {
             _isLoading = false;
-            
+
             // Parse result into List<Medicine>
-            if (result['medications'] != null && (result['medications'] as List).isNotEmpty) {
+            if (result['medications'] != null &&
+                (result['medications'] as List).isNotEmpty) {
               _medications = (result['medications'] as List).map((medObj) {
                 return Medicine(
                   name: medObj['name'] ?? 'Không rõ',
                   dosage: medObj['dosage'] ?? 'Không rõ',
                   icon: medObj['icon'] ?? 'pill',
-                  schedule: (medObj['schedule'] as List?)?.map((timeStr) {
-                    return ScheduleItem(time: timeStr.toString(), isTaken: false);
-                  }).toList() ?? [],
+                  schedule:
+                      (medObj['schedule'] as List?)?.map((timeStr) {
+                        return ScheduleItem(
+                          time: timeStr.toString(),
+                          isTaken: false,
+                        );
+                      }).toList() ??
+                      [],
                 );
               }).toList();
             }
@@ -174,10 +186,15 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Đã phân tích thông tin xong!', style: GoogleFonts.lexend()),
+              content: Text(
+                'Đã phân tích thông tin xong!',
+                style: GoogleFonts.lexend(),
+              ),
               backgroundColor: const Color(0xFF006A71),
               behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
           );
         }
@@ -192,7 +209,9 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
             content: Text('Lỗi: $e', style: GoogleFonts.lexend()),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
           ),
         );
       }
@@ -214,9 +233,13 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
   // ── Tab 2: Health Advice Logic ──────────────────────
 
   Future<void> _fetchHealthAdvice([String? overrideSessionId]) async {
-    final sessionId = overrideSessionId ?? ref.read(sessionProvider).lastSessionId;
+    final sessionId =
+        overrideSessionId ?? ref.read(sessionProvider).lastSessionId;
     if (sessionId == null || sessionId.isEmpty) {
-      setState(() => _adviceError = "Chưa có phiên khám nào. Hãy khám bệnh với AI trước.");
+      setState(
+        () => _adviceError =
+            "Chưa có phiên khám nào. Hãy khám bệnh với AI trước.",
+      );
       return;
     }
 
@@ -275,8 +298,14 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
               indicatorWeight: 3,
               labelColor: primaryColor,
               unselectedLabelColor: Colors.grey,
-              labelStyle: GoogleFonts.lexend(fontWeight: FontWeight.bold, fontSize: 14),
-              unselectedLabelStyle: GoogleFonts.lexend(fontWeight: FontWeight.w400, fontSize: 14),
+              labelStyle: GoogleFonts.lexend(
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+              unselectedLabelStyle: GoogleFonts.lexend(
+                fontWeight: FontWeight.w400,
+                fontSize: 14,
+              ),
               tabs: const [
                 Tab(
                   icon: Icon(Icons.medication_rounded, size: 20),
@@ -357,7 +386,9 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                 ),
               )
             else
-              ..._medications.map((med) => _buildMedicationCard(med, primaryColor)),
+              ..._medications.map(
+                (med) => _buildMedicationCard(med, primaryColor),
+              ),
             const SizedBox(height: 24),
             _buildAddMoreSection(primaryColor),
             const SizedBox(height: 40),
@@ -378,7 +409,10 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
     final isCompleted = sessionState.isCompleted;
 
     // Auto-fetch when session is completed and we haven't fetched for this session yet
-    if (isCompleted && hasSession && _lastFetchedSessionId != sessionState.lastSessionId && !_isAdviceLoading) {
+    if (isCompleted &&
+        hasSession &&
+        _lastFetchedSessionId != sessionState.lastSessionId &&
+        !_isAdviceLoading) {
       // Schedule fetch after build
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _fetchHealthAdvice(sessionState.lastSessionId);
@@ -418,7 +452,11 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.auto_awesome, color: Colors.white, size: 24),
+                      const Icon(
+                        Icons.auto_awesome,
+                        color: Colors.white,
+                        size: 24,
+                      ),
                       const SizedBox(width: 10),
                       Text(
                         'MedGemma AI',
@@ -434,8 +472,8 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                   Text(
                     hasSession
                         ? (isCompleted
-                            ? 'Phiên khám đã hoàn tất. Lời khuyên sức khỏe đang được tạo tự động.'
-                            : 'Đang trong phiên khám. Hoàn thành khám bệnh để nhận lời khuyên.')
+                              ? 'Phiên khám đã hoàn tất. Lời khuyên sức khỏe đang được tạo tự động.'
+                              : 'Đang trong phiên khám. Hoàn thành khám bệnh để nhận lời khuyên.')
                         : 'Hãy khám bệnh với AI trước để nhận lời khuyên chăm sóc sức khỏe cá nhân hóa.',
                     style: GoogleFonts.lexend(
                       color: Colors.white70,
@@ -445,7 +483,10 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                   const SizedBox(height: 16),
                   // Status indicator
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(12),
@@ -480,18 +521,31 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton.icon(
-                        onPressed: _isAdviceLoading ? null : () {
-                          _lastFetchedSessionId = null; // Force re-fetch
-                          _fetchHealthAdvice();
-                        },
-                        icon: const Icon(Icons.refresh_rounded, size: 18, color: Colors.white70),
+                        onPressed: _isAdviceLoading
+                            ? null
+                            : () {
+                                _lastFetchedSessionId = null; // Force re-fetch
+                                _fetchHealthAdvice();
+                              },
+                        icon: const Icon(
+                          Icons.refresh_rounded,
+                          size: 18,
+                          color: Colors.white70,
+                        ),
                         label: Text(
                           'Làm mới lời khuyên',
-                          style: GoogleFonts.lexend(fontSize: 13, color: Colors.white70),
+                          style: GoogleFonts.lexend(
+                            fontSize: 13,
+                            color: Colors.white70,
+                          ),
                         ),
                         style: OutlinedButton.styleFrom(
-                          side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          side: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.3),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                           padding: const EdgeInsets.symmetric(vertical: 10),
                         ),
                       ),
@@ -543,12 +597,19 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.error_outline, color: Colors.red.shade700, size: 20),
+                    Icon(
+                      Icons.error_outline,
+                      color: Colors.red.shade700,
+                      size: 20,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         _adviceError!,
-                        style: GoogleFonts.lexend(color: Colors.red.shade700, fontSize: 13),
+                        style: GoogleFonts.lexend(
+                          color: Colors.red.shade700,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ],
@@ -570,7 +631,11 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.summarize_rounded, color: Colors.blue.shade700, size: 20),
+                        Icon(
+                          Icons.summarize_rounded,
+                          color: Colors.blue.shade700,
+                          size: 20,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           'Tóm tắt tình trạng',
@@ -626,26 +691,35 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                 color: Colors.orange.shade700,
                 bgColor: Colors.orange.shade50,
                 borderColor: Colors.orange.shade200,
-                tips: _healthTips.where((t) => t.category == 'warning').toList(),
+                tips: _healthTips
+                    .where((t) => t.category == 'warning')
+                    .toList(),
               ),
             ],
 
             // Empty state
-            if (_healthTips.isEmpty && !_isAdviceLoading && _adviceError == null && _diagnosisSummary.isEmpty)
+            if (_healthTips.isEmpty &&
+                !_isAdviceLoading &&
+                _adviceError == null &&
+                _diagnosisSummary.isEmpty)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 60),
                 child: Column(
                   children: [
                     Icon(
-                      hasSession ? Icons.hourglass_empty_rounded : Icons.health_and_safety_outlined,
+                      hasSession
+                          ? Icons.hourglass_empty_rounded
+                          : Icons.health_and_safety_outlined,
                       size: 64,
                       color: Colors.grey.shade300,
                     ),
                     const SizedBox(height: 16),
                     Text(
                       hasSession
-                          ? (isCompleted ? 'Dang chuan bi loi khuyen...' : 'Dang trong phien kham')
+                          ? (isCompleted
+                                ? 'Dang chuan bi loi khuyen...'
+                                : 'Dang trong phien kham')
                           : 'Chua co loi khuyen nao',
                       style: GoogleFonts.lexend(
                         fontSize: 16,
@@ -659,8 +733,8 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                       child: Text(
                         hasSession
                             ? (isCompleted
-                                ? 'Loi khuyen se duoc tu dong tao sau khi hoan thanh phien kham.'
-                                : 'Hoan thanh phien kham voi AI Agent 1 de nhan loi khuyen tu dong.')
+                                  ? 'Loi khuyen se duoc tu dong tao sau khi hoan thanh phien kham.'
+                                  : 'Hoan thanh phien kham voi AI Agent 1 de nhan loi khuyen tu dong.')
                             : 'Hay bat dau kham benh voi AI o tab "Kham benh" de nhan loi khuyen suc khoe ca nhan hoa.',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.lexend(
@@ -706,38 +780,40 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
         ],
       ),
       const SizedBox(height: 12),
-      ...tips.map((tip) => Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: borderColor),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              tip.title,
-              style: GoogleFonts.lexend(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                color: color,
+      ...tips.map(
+        (tip) => Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                tip.title,
+                style: GoogleFonts.lexend(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  color: color,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              tip.description,
-              style: GoogleFonts.lexend(
-                fontSize: 13,
-                color: Colors.grey.shade800,
-                height: 1.5,
+              const SizedBox(height: 6),
+              Text(
+                tip.description,
+                style: GoogleFonts.lexend(
+                  fontSize: 13,
+                  color: Colors.grey.shade800,
+                  height: 1.5,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      )),
+      ),
       const SizedBox(height: 16),
     ];
   }
@@ -833,7 +909,11 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
               color: primaryColor.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
-            child: Icon(Icons.notifications_active_rounded, color: primaryColor, size: 24),
+            child: Icon(
+              Icons.notifications_active_rounded,
+              color: primaryColor,
+              size: 24,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -865,7 +945,9 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
               setState(() => _remindersEnabled = val);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(val ? 'Đã bật nhắc nhở điện thoại' : 'Đã tắt nhắc nhở'),
+                  content: Text(
+                    val ? 'Đã bật nhắc nhở điện thoại' : 'Đã tắt nhắc nhở',
+                  ),
                   duration: const Duration(seconds: 1),
                   behavior: SnackBarBehavior.floating,
                 ),
@@ -903,21 +985,31 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
-                med.icon == 'capsule' ? Icons.medication_liquid_rounded :
-                med.icon == 'effervescent' ? Icons.bubble_chart_rounded :
-                med.icon == 'syrup' ? Icons.local_drink_rounded :
-                med.icon == 'injection' ? Icons.vaccines_rounded :
-                Icons.medication_rounded,
+                med.icon == 'capsule'
+                    ? Icons.medication_liquid_rounded
+                    : med.icon == 'effervescent'
+                    ? Icons.bubble_chart_rounded
+                    : med.icon == 'syrup'
+                    ? Icons.local_drink_rounded
+                    : med.icon == 'injection'
+                    ? Icons.vaccines_rounded
+                    : Icons.medication_rounded,
                 color: primaryColor,
               ),
             ),
             title: Text(
               med.name,
-              style: GoogleFonts.lexend(fontWeight: FontWeight.bold, fontSize: 16),
+              style: GoogleFonts.lexend(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
             ),
             subtitle: Text(
               med.dosage,
-              style: GoogleFonts.lexend(color: Colors.grey.shade600, fontSize: 13),
+              style: GoogleFonts.lexend(
+                color: Colors.grey.shade600,
+                fontSize: 13,
+              ),
             ),
             trailing: const Icon(Icons.more_vert_rounded),
           ),
@@ -936,7 +1028,10 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                   },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: isTaken ? primaryColor : Colors.grey.shade50,
                       borderRadius: BorderRadius.circular(100),
@@ -948,7 +1043,9 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
-                          isTaken ? Icons.check_circle_rounded : Icons.schedule_rounded,
+                          isTaken
+                              ? Icons.check_circle_rounded
+                              : Icons.schedule_rounded,
                           size: 16,
                           color: isTaken ? Colors.white : Colors.grey.shade600,
                         ),
@@ -956,7 +1053,9 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                         Text(
                           item.time,
                           style: GoogleFonts.lexend(
-                            color: isTaken ? Colors.white : Colors.grey.shade700,
+                            color: isTaken
+                                ? Colors.white
+                                : Colors.grey.shade700,
                             fontWeight: FontWeight.bold,
                             fontSize: 14,
                           ),
@@ -980,11 +1079,18 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
       decoration: BoxDecoration(
         color: primaryColor.withValues(alpha: 0.03),
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: primaryColor.withValues(alpha: 0.1), style: BorderStyle.solid),
+        border: Border.all(
+          color: primaryColor.withValues(alpha: 0.1),
+          style: BorderStyle.solid,
+        ),
       ),
       child: Column(
         children: [
-          const Icon(Icons.add_photo_alternate_rounded, size: 48, color: Colors.grey),
+          const Icon(
+            Icons.add_photo_alternate_rounded,
+            size: 48,
+            color: Colors.grey,
+          ),
           const SizedBox(height: 16),
           Text(
             'Thêm đơn thuốc mới',
@@ -998,7 +1104,10 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
           Text(
             'Quét thêm đơn thuốc để tự động cập nhật lịch.',
             textAlign: TextAlign.center,
-            style: GoogleFonts.lexend(fontSize: 13, color: Colors.grey.shade600),
+            style: GoogleFonts.lexend(
+              fontSize: 13,
+              color: Colors.grey.shade600,
+            ),
           ),
           const SizedBox(height: 20),
           Row(
@@ -1042,12 +1151,18 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
         decoration: BoxDecoration(
           color: isOutline ? Colors.white : primaryColor,
           borderRadius: BorderRadius.circular(12),
-          border: isOutline ? Border.all(color: primaryColor.withValues(alpha: 0.2)) : null,
+          border: isOutline
+              ? Border.all(color: primaryColor.withValues(alpha: 0.2))
+              : null,
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 18, color: isOutline ? primaryColor : Colors.white),
+            Icon(
+              icon,
+              size: 18,
+              color: isOutline ? primaryColor : Colors.white,
+            ),
             const SizedBox(width: 8),
             Text(
               label,

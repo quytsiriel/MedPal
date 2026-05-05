@@ -184,8 +184,8 @@ def classify_user_input(user_input: str, last_assistant_msg: str) -> dict:
 
 Tin nhắn người dùng: "{user_input}"
 
-Nhiệm vụ: Phân loại tin nhắn người dùng và trả về JSON duy nhất.
-Lưu ý quan trọ ng: Nếu là câu hỏi, trường 'explanation' phải là lời giải thích TRỰC TIẼP cho bệnh nhân.
+Nhiệm vụ: Phân loại tin nhắn người dùng và trả về JSON duy nhất theo 3 loại: "answer", "question", hoặc "invalid".
+Lưu ý quan trọng: Nếu là câu hỏi, trường 'explanation' phải là lời giải thích TRỰC TIẾP cho bệnh nhân.
 KHÔNG được viết: 'Người dùng đang hỏi...' hay 'Bệnh nhân muốn biết...'"""
 
         response = create_brain2_client().chat.completions.create(
@@ -534,6 +534,20 @@ def chat_with_agent1(request: ChatRequest):
     
     classification = classify_user_input(user_input, last_assistant_msg)
     
+    if classification.get("type") == "invalid":
+        # Người dùng nói nhảm, không liên quan y tế
+        reminder = classification.get("reminder", "Xin lỗi, tôi là trợ lý y khoa. Xin vui lòng trả lời câu hỏi liên quan đến tình trạng sức khỏe của bạn.")
+        
+        # Thêm câu nhắc nhở nhưng KHÔNG tính vào lịch sử hội thoại chính thức để luồng vẫn duy trì
+        # Hoặc lưu vào lịch sử nhưng không chuyển cho Brain 1
+        history.append({"role": "user", "content": user_input})
+        history.append({"role": "assistant", "content": reminder})
+        
+        update_session(request.session_id, {
+            "conversation_history": history,
+        })
+        return ChatResponse(reply=reminder, emergency=False, stage="collecting", transcript=transcript)
+
     if classification.get("type") == "question":
         # Người dùng hỏi ngoài lề (vd: "chuột rút bụng là gì?")
         explanation = classification.get("explanation", "Xin lỗi, tôi chưa thể giải thích rõ.")
@@ -551,7 +565,7 @@ def chat_with_agent1(request: ChatRequest):
         })
         return ChatResponse(reply=clarify_reply, emergency=False, stage="clarifying", transcript=transcript)
 
-    # ─── STEP 3: BRAIN 2 — SCORING ─────────────────
+    # ─── STEP 3: BRAIN 2 — SCORING (Chỉ khi type == "answer") ─────────────────
     # Lấy processed_input từ Brain 2 (có thể đã được xử lý/rút gọn)
     processed_input = classification.get("processed_input", user_input)
     

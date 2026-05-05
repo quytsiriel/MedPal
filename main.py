@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 # Tự động nạp biến môi trường từ file .env vào os.environ
-load_dotenv()
+load_dotenv(override=True)
 
 from services.firebase import init_firebase
 from agents.agent1_router import router as agent1_router
@@ -32,3 +32,5 @@ app.include_router(agent3_router)
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+# Trigger Uvicorn reload

@@ -1,0 +1,125 @@
+#cloud-config
+# =============================================================
+# MedPal - Cloud Init Script
+# Target: Ubuntu 22.04 LTS (FPT AI Factory)
+# Purpose: Auto-configure VM on first boot
+#   - Install Python, Git, system dependencies
+#   - Install & configure Ollama (bind to 0.0.0.0)
+#   - Pull MedGemma model
+#   - Clone MedPal backend and start FastAPI as a systemd service
+# =============================================================
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - git
+  - python3
+  - python3-pip
+  - python3-venv
+  - curl
+  - wget
+  - nano
+  - htop
+  - net-tools
+
+write_files:
+  # -------------------------------------------------------
+  # 1. Ollama systemd service (bind on 0.0.0.0)
+  # -------------------------------------------------------
+  - path: /etc/systemd/system/ollama.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Ollama LLM Server
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      ExecStart=/usr/local/bin/ollama serve
+      User=root
+      Group=root
+      Restart=always
+      RestartSec=3
+      Environment="OLLAMA_HOST=0.0.0.0:11434"
+      Environment="OLLAMA_MODELS=/root/.ollama/models"
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # -------------------------------------------------------
+  # 2. MedPal FastAPI systemd service
+  # -------------------------------------------------------
+  - path: /etc/systemd/system/medpal.service
+    permissions: '0644'
+    content: |
+      [Unit]      Description=MedPal FastAPI Backend
+      After=network-online.target ollama.service
+      Wants=network-online.target
+
+      [Service]
+      WorkingDirectory=/opt/medpal
+      ExecStart=/opt/medpal/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+      User=root
+      Group=root
+      Restart=always
+      RestartSec=5
+      EnvironmentFile=/opt/medpal/.env
+      Environment="PYTHONIOENCODING=utf-8"
+      Environment="PYTHONUTF8=1"
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # -------------------------------------------------------
+  # 3. .env file cho MedPal backend
+  # (Thay YOUR_REPO_URL và các giá trị thật trước khi dùng)
+  # -------------------------------------------------------
+  - path: /opt/medpal/.env
+    permissions: '0600'
+    content: |
+      OLLAMA_BASE_URL=http://localhost:11434/v1
+      OLLAMA_MODEL=puyangwang/medgemma-27b-it:q4_0
+      # FIREBASE_CREDENTIALS_PATH=/opt/medpal/serviceAccountKey.json
+
+  # -------------------------------------------------------
+  # 4. Script bootstrap (chạy sau khi boot)
+  # -------------------------------------------------------
+  - path: /root/bootstrap.sh
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      set -e
+      echo "=== [1/5] Installing Ollama ==="
+      curl -fsSL https://ollama.com/install.sh | sh
+
+      echo "=== [2/5] Starting Ollama service ==="
+      systemctl daemon-reload
+      systemctl enable ollama
+      systemctl start ollama
+      sleep 5
+
+      echo "=== [3/5] Pulling MedGemma model (may take 10-30 mins) ==="
+      ollama pull puyangwang/medgemma-27b-it:q4_0
+
+      echo "=== [4/5] Cloning MedPal backend ==="
+      # THAY BẰNG REPO URL THẬT CỦA BẠN
+      git clone https://github.com/YOUR_USERNAME/medpal.git /opt/medpal || true
+      cd /opt/medpal
+
+      echo "=== [5/5] Installing Python dependencies ==="
+      python3 -m venv venv
+      venv/bin/pip install --upgrade pip
+      venv/bin/pip install -r requirements.txt
+
+      echo "=== Starting MedPal service ==="
+      systemctl daemon-reload
+      systemctl enable medpal
+      systemctl start medpal
+
+      echo "=== Bootstrap complete! ==="
+      echo "FastAPI running on: http://$(curl -s ifconfig.me):8000"
+      echo "Ollama running on:  http://$(curl -s ifconfig.me):11434"
+
+runcmd:
+  - /root/bootstrap.sh >> /var/log/medpal-bootstrap.log 2>&1

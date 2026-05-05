@@ -28,6 +28,14 @@ Các dạng câu hỏi ngoài lề phổ biến:
 - Hỏi để hiểu rõ hơn câu hỏi: "Ý bạn là gì?", "Mình không hiểu câu hỏi"
 - Hỏi về triệu chứng: "Triệu chứng đó như thế nào?", "Làm sao biết mình có bị X?"
 
+### Loại "invalid" — Câu nói nhảm / Không liên quan y tế
+Ví dụ:
+- "Hôm nay trời đẹp quá"
+- "Kể chuyện cười cho tôi nghe đi"
+- "Bạn tên là gì?"
+- Trả lời bằng các ký tự ngẫu nhiên hoặc các câu không có ý nghĩa.
+→ Người dùng đang đi lạc đề, cần được nhắc nhở nhẹ nhàng để quay lại chủ đề y tế.
+
 ## CÁCH TRẢ LỜI CHO NHIỆM VỤ 1
 
 Trả về JSON duy nhất, không giải thích thêm.
@@ -41,6 +49,9 @@ Ví dụ: Người dùng nói "hôm đó tui đau bụng quá, 2 ngày rồi, c�
 
 Nếu là câu hỏi ngoài lề:
 {"type": "question", "explanation": "<xem quy tắc bên dưới>", "follow_up": "<câu hỏi lại câu hỏi cũ nhưng dùng từ dễ hiểu hơn>"}
+
+Nếu là câu nói nhảm / không liên quan (invalid):
+{"type": "invalid", "reminder": "<Lời nhắc nhở nhẹ nhàng (1-2 câu) yêu cầu bệnh nhân tập trung trả lời câu hỏi y tế trước đó>"}
 
 ### QUY TẮC VIẾT TRƯỜNG "explanation" — CỰC KỲ QUAN TRỌNG
 
