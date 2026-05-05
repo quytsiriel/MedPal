@@ -18,17 +18,12 @@ router = APIRouter(prefix="/agent1", tags=["Agent 1"])
 
 # ── Metadata ───────────────────────────────────────
 TASKS = [
-    ("t21", "thời điểm và cách khởi phát triệu chứng"),
-    ("t22", "vị trí, tính chất, mức độ triệu chứng"),
-    ("t23", "diễn biến theo thời gian"),
-    ("t24", "triệu chứng kèm theo"),
-    ("t25", "đã khám hoặc dùng thuốc gì chưa"),
-    ("t26", "tình trạng ăn ngủ, cân nặng gần đây"),
-    ("t31", "bệnh mãn tính hoặc bệnh cũ"),
-    ("t32", "tiêm chủng gần đây"),
-    ("t33", "phẫu thuật hoặc chấn thương"),
-    ("t34", "truyền máu"),
-    ("t35", "dị ứng thuốc hoặc thực phẩm"),
+    ("t1", "Lý do khám chính (Triệu chứng nổi bật nhất)"),
+    ("t2", "Vị trí, tính chất và mức độ triệu chứng"),
+    ("t3", "Thời điểm khởi phát và diễn biến theo thời gian"),
+    ("t4", "Triệu chứng kèm theo hoặc không kèm theo"),
+    ("t5", "Đã xử lý hoặc dùng thuốc gì chưa"),
+    ("t6", "Tiền sử bệnh lý (bệnh mãn tính, dị ứng)"),
 ]
 
 MEDICAL_KEYWORDS = [
@@ -109,13 +104,11 @@ def build_asked_topics(history: list) -> str:
     """Trích xuất danh sách các chủ đề AI đã hỏi để tránh lặp."""
     asked = []
     for msg in history:
-        if msg["role"] == "assistant" and "?" in msg["content"]:
-            # Lấy câu hỏi từ tin nhắn AI
-            content = msg["content"]
-            # Trích xuất câu chứa dấu ?
-            for sentence in content.replace("\n", " ").split("."):
-                if "?" in sentence:
-                    asked.append(sentence.strip())
+        if msg["role"] == "assistant":
+            content = msg["content"].replace("\n", " ")
+            # Tách thành các câu dựa trên dấu kết thúc câu
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', content) if s.strip()]
+            asked.extend(sentences)
     return "\n".join(f"  - {q}" for q in asked[-10:])  # Giữ tối đa 10 câu gần nhất
 
 def detect_emergency(text: str) -> bool:
@@ -166,263 +159,208 @@ def _strip_thinking(explanation: str) -> str:
     return explanation
 
 
-def classify_user_input(user_input: str, last_assistant_msg: str) -> dict:
+def filter_user_input(user_input: str, last_assistant_msg: str) -> dict:
     """
-    Brain 2: Phân loại tin nhắn người dùng.
-    - "answer": Câu trả lời bình thường → chuyển cho Brain 1
-    - "question": Câu hỏi ngoài lề → Brain 2 giải thích, trả stage="clarifying"
+    Brain 2 (Model 4B): Filter tin nhắn người dùng.
+    Trả về JSON:
+    {
+      "category": "on_topic" | "off_topic",
+      "status": "đủ" | "thiếu", 
+      "medical_related": true/false,
+      "reply": "câu trả lời nếu off_topic hoặc thiếu thông tin",
+      "processed_input": "thông tin hữu ích trích xuất được (nếu có)"
+    }
     """
     try:
-        prompt_brain2 = ""
-        try:
-            with open(PROMPT_BRAIN2_PATH, "r", encoding="utf-8") as f:
-                prompt_brain2 = f.read()
-        except:
-            prompt_brain2 = "Bạn là evaluator y tế. Phân loại tin nhắn người dùng."
+        prompt_brain2 = "Bạn là chuyên gia y tế và hệ thống phân loại. Bạn am hiểu và CÓ THỂ giải thích chi tiết các thuật ngữ y khoa. Trả về JSON duy nhất."
+        
+        filter_prompt = f"""Tin nhắn của bác sĩ (vừa hỏi): "{last_assistant_msg}"
+Tin nhắn của bệnh nhân: "{user_input}"
 
-        classify_prompt = f"""Tin nhắn cuối của trợ lý: "{last_assistant_msg}"
+Nhiệm vụ:
+1. Xác định tin nhắn của bệnh nhân là "on_topic" (đang trả lời thông tin bác sĩ cần) hay "off_topic" (hỏi linh tinh, HOẶC hỏi giải thích thuật ngữ, ví dụ "X là gì?", "Tại sao?").
+2. Nếu "on_topic", xác định "status" là "đủ" hay "thiếu". LƯU Ý QUAN TRỌNG: Nếu bác sĩ hỏi 2 ý, nhưng bệnh nhân chỉ trả lời 1 ý, HÃY COI LÀ "đủ" (để hệ thống khác tự hỏi tiếp). CHỈ xếp vào "thiếu" khi bệnh nhân HOÀN TOÀN lảng tránh, không cung cấp bất kỳ thông tin nào.
+3. Nếu "thiếu", hãy sinh ra một câu hỏi nhắc nhở (vào trường 'reply'). TUYỆT ĐỐI KHÔNG BÊ NGUYÊN câu hỏi cũ để hỏi lại, hãy hỏi một cách ngắn gọn, tập trung vào ý bị thiếu.
+4. Nếu "off_topic": BẠN LÀ TỪ ĐIỂN Y KHOA. Nếu bệnh nhân hỏi "X là gì?", bạn TUYỆT ĐỐI KHÔNG ĐƯỢC hỏi vặn lại hay bắt bệnh nhân tự miêu tả. Bạn PHẢI TỰ ĐƯA RA ĐỊNH NGHĨA rõ ràng cho X. Sau khi giải thích xong, BẮT BUỘC PHẢI nhắc lại nội dung của "Tin nhắn của bác sĩ (vừa hỏi)" để dẫn dắt bệnh nhân tiếp tục trả lời vấn đề chính.
+5. Trích xuất các thông tin triệu chứng hữu ích vào 'processed_input' (nếu có).
 
-Tin nhắn người dùng: "{user_input}"
-
-Nhiệm vụ: Phân loại tin nhắn người dùng và trả về JSON duy nhất.
-Lưu ý quan trọ ng: Nếu là câu hỏi, trường 'explanation' phải là lời giải thích TRỰC TIẼP cho bệnh nhân.
-KHÔNG được viết: 'Người dùng đang hỏi...' hay 'Bệnh nhân muốn biết...'"""
+Chỉ trả về định dạng JSON:
+{{
+  "category": "on_topic" | "off_topic",
+  "status": "đủ" | "thiếu",
+  "medical_related": true | false,
+  "reply": "câu trả lời/hỏi lại của bạn",
+  "processed_input": "các triệu chứng bệnh nhân đã cung cấp"
+}}"""
 
         response = create_brain2_client().chat.completions.create(
             model=OLLAMA_MODEL_2,
             messages=[
                 {"role": "system", "content": prompt_brain2},
-                {"role": "user", "content": classify_prompt}
+                {"role": "user", "content": filter_prompt}
             ],
             temperature=0
         )
         raw = response.choices[0].message.content.strip()
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
-            result = json.loads(match.group())
-            if "type" in result:
-                # Lọc chain-of-thought nếu lỏ bị rò
-                if result.get("type") == "question" and result.get("explanation"):
-                    result["explanation"] = _strip_thinking(result["explanation"])
-                return result
+            return json.loads(match.group())
     except Exception as e:
-        print(f"[WARN] Brain 2 classify failed: {e}")
+        print(f"[WARN] Brain 2 filter failed: {e}")
     
-    # Fallback: coi là câu trả lời bình thường
-    return {"type": "answer", "processed_input": user_input}
+    # Fallback: coi là đủ
+    return {"category": "on_topic", "status": "đủ", "medical_related": True, "reply": "", "processed_input": user_input}
 
-
-def score_tasks_from_history(history: list, task_scores: dict) -> tuple:
-    """Brain 2: Chấm điểm 11 tasks. Trả về (is_sufficient, next_best_task)."""
+def extract_patient_info(history: list) -> dict:
+    """Brain 1 (Model 27B): Trích xuất 9 sub-fields từ lịch sử hội thoại."""
     if not history:
-        return (False, None)
+        return {}
     
+    main_history = [m for m in history if not m.get("is_off_topic", False)]
     conversation_text = "\n".join(
         f"{'Bệnh nhân' if m['role'] == 'user' else 'Trợ lý'}: {m['content']}" 
-        for m in history
+        for m in main_history
     )
-    task_list = "\n".join(f"- {tid}: {desc}" for tid, desc in TASKS)
     
-    scoring_prompt = f"""Đây là đoạn hội thoại giữa trợ lý y tế và bệnh nhân:
+    extraction_prompt = f"""Đây là đoạn hội thoại giữa trợ lý y tế và bệnh nhân:
 
 {conversation_text}
 
-Đánh giá mức độ đã khai thác được thông tin cho từng mục sau. Chỉ trả về JSON, không giải thích.
-Thang điểm:
-- 1.0: có thông tin rõ ràng, đầy đủ
-- 0.5: có đề cập nhưng chưa rõ hoặc chưa đủ
-- 0.0: chưa được hỏi hoặc chưa có thông tin
+Hãy trích xuất các thông tin y tế bệnh nhân ĐÃ CUNG CẤP vào JSON theo đúng các trường sau. 
+LƯU Ý ĐẶC BIỆT 1: Tuyệt đối KHÔNG trích xuất các từ khóa nếu bệnh nhân chỉ đang hỏi định nghĩa (ví dụ: "Đau quặn là gì?"). Chỉ trích xuất khi bệnh nhân XÁC NHẬN họ có triệu chứng đó.
+LƯU Ý ĐẶC BIỆT 2: Nếu bệnh nhân trả lời là "Không có", "Không" (ví dụ không bị dị ứng), PHẢI trích xuất chữ "Không có". Tuyệt đối KHÔNG ĐƯỢC để null. 
+Chỉ để null khi thông tin CHƯA ĐƯỢC HỎI hoặc bệnh nhân không trả lời vào trọng tâm.
 
-Danh sách mục:
-{task_list}
+{{
+  "t1_ly_do": "Lý do khám chính",
+  "t2_vi_tri": "Vị trí đau/triệu chứng",
+  "t2_tinh_chat": "Tính chất (âm ỉ, quặn, rát...)",
+  "t2_muc_do": "Mức độ (nhẹ, vừa, dữ dội...)",
+  "t3_khoi_phat": "Bị từ bao giờ",
+  "t3_dien_bien": "Tiến triển (tăng lên, giảm đi...)",
+  "t4_kem_theo": "Các triệu chứng khác",
+  "t5_da_xu_ly": "Đã xử lý/uống thuốc gì",
+  "t6_tien_su": "Bệnh nền, dị ứng"
+}}
 
-Trả về đúng định dạng chuẩn:
-{{"t21": 0.0, "t22": 0.0, "t23": 0.0, "t24": 0.0, "t25": 0.0, "t26": 0.0, "t31": 0.0, "t32": 0.0, "t33": 0.0, "t34": 0.0, "t35": 0.0, "is_sufficient": false, "next_best_task": "t22"}}"""
-    
+Chỉ trả về định dạng JSON, không giải thích."""
+
     try:
-        prompt_brain2 = ""
-        try:
-            with open(PROMPT_BRAIN2_PATH, "r", encoding="utf-8") as f:
-                prompt_brain2 = f.read()
-        except:
-            prompt_brain2 = "Bạn là evaluator y tế."
-
-        response = create_brain2_client().chat.completions.create(
-            model=OLLAMA_MODEL_2,
+        response = create_brain1_client().chat.completions.create(
+            model=OLLAMA_MODEL,
             messages=[
-                {"role": "system", "content": prompt_brain2},
-                {"role": "user", "content": scoring_prompt}
+                {"role": "system", "content": "Bạn là chuyên gia phân tích hồ sơ bệnh án."},
+                {"role": "user", "content": extraction_prompt}
             ],
             temperature=0
         )
         raw = response.choices[0].message.content.strip()
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
-            scores = json.loads(match.group())
-            for tid in task_scores:
-                if tid in scores:
-                    task_scores[tid] = float(scores[tid])
-            is_sufficient = scores.get("is_sufficient", False)
-            next_best = scores.get("next_best_task", None)
-            return (is_sufficient, next_best)
+            return json.loads(match.group())
     except Exception as e:
-        print(f"[WARN] Brain 2 scoring failed: {e}")
-    return (False, None)
+        print(f"[WARN] Brain 1 extraction failed: {e}")
+    return {}
+
+def calculate_scores_from_extracted_info(info: dict) -> dict:
+    scores = {}
+    
+    def is_filled(val):
+        if not val: return False
+        v = str(val).lower().strip()
+        if v in ["", "null", "none", "không rõ", "chưa rõ", "chưa khai thác", "không có thông tin"]: return False
+        return True
+
+    scores["t1"] = 1.0 if is_filled(info.get("t1_ly_do")) else 0.0
+    
+    t2_fields = [info.get("t2_vi_tri"), info.get("t2_tinh_chat"), info.get("t2_muc_do")]
+    scores["t2"] = sum(1 for f in t2_fields if is_filled(f)) / 3.0
+    
+    t3_fields = [info.get("t3_khoi_phat"), info.get("t3_dien_bien")]
+    scores["t3"] = sum(1 for f in t3_fields if is_filled(f)) / 2.0
+    
+    scores["t4"] = 1.0 if is_filled(info.get("t4_kem_theo")) else 0.0
+    scores["t5"] = 1.0 if is_filled(info.get("t5_da_xu_ly")) else 0.0
+    scores["t6"] = 1.0 if is_filled(info.get("t6_tien_su")) else 0.0
+
+    return scores
 
 # ── Brain 1 Functions ──────────────────────────────
 
-def generate_record(history: list) -> str:
-    """Brain 1: Tổng hợp hồ sơ tiền khám từ lịch sử hội thoại."""
+def generate_final_report(history: list) -> dict:
+    """
+    Brain 1 (Model 27B): Hợp nhất tổng hợp hồ sơ và đánh giá đi khám vào 1 JSON duy nhất.
+    """
+    main_history = [m for m in history if not m.get("is_off_topic", False)]
     conversation_text = "\n".join(
         f"{'Bệnh nhân' if m['role'] == 'user' else 'Trợ lý'}: {m['content']}" 
-        for m in history
+        for m in main_history
     )
-    record_prompt = f"""Dựa trên đoạn hội thoại:
+    
+    prompt = f"""Dựa trên đoạn hội thoại:
 
 {conversation_text}
 
-Hãy tạo hồ sơ tiền khám hoàn chỉnh. Chỉ dùng thông tin bệnh nhân đã nói. Mục nào chưa có ghi [chưa khai thác]. Nhưng bắt buộc phải ghi tên Khoa chính.
+Nhiệm vụ 1: Tổng hợp hồ sơ tiền khám dựa trên thông tin bệnh nhân đã nói.
+Nhiệm vụ 2: Đưa ra câu chốt lại (closing statement) khuyên bệnh nhân đi khám.
+Yêu cầu cho câu chốt lại:
+- KHÔNG ĐƯỢC chẩn đoán bệnh cụ thể (không được nói "bạn bị bệnh X").
+- Chỉ đưa ra sự tương quan giữa triệu chứng/vị trí với các vùng/hệ cơ quan nhạy cảm nếu có.
+- Yêu cầu bệnh nhân cần được bác sĩ thăm khám (có thể ngay lập tức hoặc sắp xếp thời gian, tuỳ mức độ) để loại trừ các tình trạng rủi ro.
+Ví dụ: "Vị trí đau của bạn trùng khớp với khu vực ruột thừa. Do tính chất nhạy cảm của vùng này, bạn cần được bác sĩ kiểm tra ngay lập tức để loại trừ các tình trạng khẩn cấp."
+- KHÔNG đưa ra lời khuyên chăm sóc tại nhà, kiêng cữ hay đơn thuốc.
 
----
-HỒ SƠ TIỀN KHÁM
----
-
-KHOA ĐỀ NGHỊ:
-  - Khoa chính: [tự xác định trên nhóm bệnh]
-  - Chuyên khoa phụ: [nếu có]
-
-LÝ DO KHÁM (CC):
-  [1–2 câu tóm tắt]
-
-LỊCH SỬ BỆNH HIỆN TẠI (HPI):
-  - Khởi phát: [...]
-  - Đặc điểm triệu chứng: [...]
-  - Diễn biến: [...]
-  - Triệu chứng kèm theo: [...]
-  - Đã xử lý: [...]
-  - Tình trạng chung: [...]
-
-TIỀN SỬ (PH):
-  - Bệnh cũ: [...]
-  - Tiêm chủng: [...]
-  - Phẫu thuật / Chấn thương: [...]
-  - Truyền máu: [...]
-  - Dị ứng: [...]
-
-LỜI KHUYÊN SỨC KHỎE:
-  [Chỉ gồm: nghỉ ngơi, uống nước, dinh dưỡng, theo dõi triệu chứng]
-  [TUYỆT ĐỐI KHÔNG đề cập thuốc hoặc bất kỳ can thiệp y tế nào]
+Trả về kết quả DƯỚI DẠNG JSON duy nhất tuân thủ CHÍNH XÁC cấu trúc sau:
+{{
+  "visitDate": "serverTimestamp",
+  "patientProfile": {{
+    "patientInfo": {{ "age": null, "sex": null, "weightKg": null }},
+    "chiefComplaint": "Lý do khám chính",
+    "symptomSummary": {{
+      "mainSymptom": "",
+      "location": "",
+      "duration": "",
+      "severity": null,
+      "description": "",
+      "associatedSymptoms": ["triệu chứng 1", "triệu chứng 2"],
+      "deniedSymptoms": ["triệu chứng phủ nhận 1"]
+    }},
+    "medicalBackground": {{
+      "chronicDiseases": [],
+      "allergies": [],
+      "currentMedications": [],
+      "previousSimilarSymptoms": ""
+    }},
+    "redFlags": {{
+      "hasRedFlags": false,
+      "details": []
+    }}
+  }},
+  "closingStatement": {{
+    "message": "Câu chốt lại theo yêu cầu trên",
+    "disclaimer": "Lưu ý: Thông tin này chỉ mang tính tham khảo, không thay thế tư vấn, chẩn đoán y khoa chính thức từ bác sĩ."
+  }}
+}}
 """
     try:
         response = create_brain1_client().chat.completions.create(
             model=OLLAMA_MODEL, 
-            messages=[{"role": "user", "content": record_prompt}], 
-            temperature=0
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"[WARN] Brain 1 generate_record failed: {e}")
-        return ""
-
-def parse_record_to_json(record_text: str) -> dict:
-    """Brain 1: Trích xuất JSON từ hồ sơ text."""
-    parse_prompt = f"""Đây là hồ sơ tiền khám dạng text:
-
-{record_text}
-
-Trích xuất thông tin và trả về JSON theo cấu trúc sau. Chỉ trả về JSON.
-Nếu một trường không có thông tin → điền "[chưa khai thác]".
-QUY TẮC loi_khuyen_suc_khoe: Chỉ giữ nội dung về nghỉ ngơi, uống nước, dinh dưỡng. Nếu vi phạm → "".
-
-{{
-  "khoa_de_nghi": {{ "khoa_chinh": "", "chuyen_khoa_phu": "" }},
-  "ly_do_kham": "",
-  "hpi": {{ "khoi_phat": "", "dac_diem_trieu_chung": "", "dien_bien": "", "trieu_chung_kem_theo": "", "da_xu_ly": "", "tinh_trang_chung": "" }},
-  "ph": {{ "benh_cu": "", "tiem_chung": "", "phau_thuat_chan_thuong": "", "truyen_mau": "", "di_ung": "" }},
-  "loi_khuyen_suc_khoe": ""
-}}"""
-    try:
-        response = create_brain1_client().chat.completions.create(
-            model=OLLAMA_MODEL, 
-            messages=[{"role": "user", "content": parse_prompt}], 
+            messages=[{"role": "user", "content": prompt}], 
             temperature=0
         )
         raw = response.choices[0].message.content.strip()
         match = re.search(r'\{.*\}', raw, re.DOTALL)
         if match:
-            obj = json.loads(match.group())
-            if "loi_khuyen_suc_khoe" in obj:
-                obj["loi_khuyen_suc_khoe"] = validate_advice(obj["loi_khuyen_suc_khoe"])
-            return obj
+            return json.loads(match.group())
     except Exception as e:
-        print(f"[WARN] Brain 1 parse_record failed: {e}")
-    return {}
-
-def decide_visit(record_json: dict, history: list) -> dict:
-    """
-    Brain 1: Quyết định bệnh nhân có nên đi khám hay không.
-    Returns: { "decision": "visit"|"no_visit", "reason": "...", "department": "...", "advice": "...", "self_care_tips": {...} }
-    """
-    conversation_text = "\n".join(
-        f"{'Bệnh nhân' if m['role'] == 'user' else 'Trợ lý'}: {m['content']}" 
-        for m in history
-    )
+        print(f"[WARN] Brain 1 generate_final_report failed: {e}")
     
-    decision_prompt = f"""Dựa trên hồ sơ tiền khám JSON và hội thoại, hãy quyết định bệnh nhân có nên đi khám bác sĩ không.
-
-HỒ SƠ JSON:
-{json.dumps(record_json, ensure_ascii=False, indent=2)}
-
-HỘI THOẠI:
-{conversation_text}
-
-QUY TẮC:
-- NÊN ĐI KHÁM nếu có BẤT KỲ dấu hiệu: triệu chứng kéo dài >7 ngày, đau dữ dội, sốt cao >3 ngày, triệu chứng thần kinh, khó thở, có bệnh nền, ảnh hưởng nghiêm trọng sinh hoạt
-- KHÔNG CẦN ĐI KHÁM nếu TẤT CẢ: triệu chứng nhẹ <3 ngày, không sốt/sốt nhẹ, sinh hoạt bình thường, không bệnh nền, triệu chứng phổ biến tự giới hạn
-
-Nếu quyết định là "no_visit", hãy tạo self_care_tips chi tiết, cụ thể cho BệNH NÀY (không chung chung).
-Ví dụ nếu bị ho: avoid gồm "Uống đồ lạnh và đá", "Ăn đồ chiên xào nhiều dầu mỡ"...
-TUYỆT ĐỐI KHÔNG đề cập thuốc trong bất kỳ trường nào.
-
-Trả về JSON duy nhất (không giải thích thêm):
-{{
-  "decision": "visit hoặc no_visit",
-  "reason": "lý do ngắn gọn",
-  "department": "tên khoa nếu visit, rỗng nếu no_visit",
-  "advice": "tóm tắt lời khuyên 1-2 câu nếu no_visit, rỗng nếu visit",
-  "self_care_tips": {{
-    "avoid": ["Điều nên kiêng 1", "Điều nên kiêng 2", "Điều nên kiêng 3"],
-    "do": ["Nên làm 1", "Nên làm 2", "Nên làm 3"],
-    "when_to_see_doctor": "Mô tả dấu hiệu cụ thể khi nào cần đi khám ngay"
-  }}
-}}
-Nếu quyết định là "visit", để self_care_tips là null."""
-    
-    try:
-        response = create_brain1_client().chat.completions.create(
-            model=OLLAMA_MODEL, 
-            messages=[{"role": "user", "content": decision_prompt}], 
-            temperature=0
-        )
-        raw = response.choices[0].message.content.strip()
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
-        if match:
-            result = json.loads(match.group())
-            # Validate advice (không chứa thuốc)
-            if result.get("advice"):
-                result["advice"] = validate_advice(result["advice"])
-            # Validate self_care_tips items
-            if result.get("self_care_tips"):
-                tips = result["self_care_tips"]
-                tips["avoid"] = [validate_advice(x) or x for x in tips.get("avoid", []) if x]
-                tips["do"] = [validate_advice(x) or x for x in tips.get("do", []) if x]
-            return result
-    except Exception as e:
-        print(f"[WARN] Brain 1 decide_visit failed: {e}")
-    
-    # Fallback: an toàn → khuyen đi khám
-    dept = record_json.get("khoa_de_nghi", {}).get("khoa_chinh", "Đa khoa")
-    return {"decision": "visit", "reason": "Không thể đánh giá tự động", "department": dept, "advice": "", "self_care_tips": None}
+    # Fallback structure
+    return {
+      "visitDate": "serverTimestamp",
+      "patientProfile": {"patientInfo": {"age": None, "sex": None, "weightKg": None}, "chiefComplaint": "Không rõ", "symptomSummary": {}, "medicalBackground": {}, "redFlags": {"hasRedFlags": False, "details": []}},
+      "closingStatement": {"message": "Dựa trên các triệu chứng bạn cung cấp, bạn nên được bác sĩ kiểm tra để loại trừ các rủi ro sức khỏe.", "disclaimer": "Lưu ý: Thông tin này chỉ mang tính tham khảo, không thay thế tư vấn, chẩn đoán y khoa chính thức từ bác sĩ."}
+    }
 
 # ── Session Management ─────────────────────────────
 def create_session(user_id: str) -> str:
@@ -437,6 +375,7 @@ def create_session(user_id: str) -> str:
         "user_id": user_id,
         "status": "collecting",
         "symptoms_accumulated": [],
+        "extracted_info": {},
         "task_scores": {tid: 0.0 for tid, _ in TASKS},
         "is_first_turn": True,
         "conversation_history": [{"role": "assistant", "content": initial_msg}],
@@ -525,97 +464,75 @@ def chat_with_agent1(request: ChatRequest):
         })
         return ChatResponse(reply=EMERGENCY_MESSAGE, emergency=True, stage="complete_visit", transcript=transcript)
 
-    # ─── STEP 2: BRAIN 2 — CLASSIFY USER INPUT ─────
+    # ─── STEP 2: BRAIN 2 — FILTER USER INPUT ─────
     last_assistant_msg = ""
     for msg in reversed(history):
         if msg["role"] == "assistant":
             last_assistant_msg = msg["content"]
             break
     
-    classification = classify_user_input(user_input, last_assistant_msg)
+    filter_result = filter_user_input(user_input, last_assistant_msg)
+    category = filter_result.get("category", "on_topic")
+    status = filter_result.get("status", "đủ")
+    reply_msg = filter_result.get("reply", "Xin lỗi, tôi chưa rõ ý bạn. Bạn có thể nói rõ hơn không?")
     
-    if classification.get("type") == "question":
-        # Người dùng hỏi ngoài lề (vd: "chuột rút bụng là gì?")
-        explanation = classification.get("explanation", "Xin lỗi, tôi chưa thể giải thích rõ.")
-        follow_up = classification.get("follow_up", "")
-        
-        clarify_reply = explanation
-        if follow_up:
-            clarify_reply += f"\n\n{follow_up}"
-        
-        history.append({"role": "user", "content": user_input})
-        history.append({"role": "assistant", "content": clarify_reply})
-        
-        update_session(request.session_id, {
-            "conversation_history": history,
-        })
-        return ChatResponse(reply=clarify_reply, emergency=False, stage="clarifying", transcript=transcript)
+    if category == "off_topic" or status == "thiếu":
+        if status == "thiếu":
+            missing_info_count = session.get("missing_info_count", 0) + 1
+            if missing_info_count >= 3:
+                # Đã hỏi 3 lần không được -> bỏ qua coi như đủ
+                update_session(request.session_id, {"missing_info_count": 0})
+            else:
+                history.append({"role": "user", "content": user_input, "is_off_topic": True})
+                history.append({"role": "assistant", "content": reply_msg, "is_off_topic": True})
+                update_session(request.session_id, {
+                    "conversation_history": history,
+                    "missing_info_count": missing_info_count
+                })
+                return ChatResponse(reply=reply_msg, emergency=False, stage="clarifying", transcript=transcript)
+        else:
+            # Off topic
+            history.append({"role": "user", "content": user_input, "is_off_topic": True})
+            history.append({"role": "assistant", "content": reply_msg, "is_off_topic": True})
+            update_session(request.session_id, {"conversation_history": history})
+            return ChatResponse(reply=reply_msg, emergency=False, stage="clarifying", transcript=transcript)
 
-    # ─── STEP 3: BRAIN 2 — SCORING ─────────────────
-    # Lấy processed_input từ Brain 2 (có thể đã được xử lý/rút gọn)
-    processed_input = classification.get("processed_input", user_input)
-    
-    # Trích xuất facts rời rạc từ Brain 2 (xử lý câu trả lời lan man)
-    extracted_facts = classification.get("extracted_facts", [])
-    if extracted_facts:
-        # Thêm từng fact riêng lẻ vào symptoms để RAG và scoring chính xác hơn
-        for fact in extracted_facts:
-            if fact and fact not in symptoms:
-                symptoms.append(fact)
-        print(f"[INFO] Extracted facts: {extracted_facts}")
-    else:
+    # ─── STEP 3: BRAIN 1 — SCORING ─────────────────
+    update_session(request.session_id, {"missing_info_count": 0})
+    processed_input = filter_result.get("processed_input", user_input)
+    if processed_input and processed_input not in symptoms:
         symptoms.append(processed_input)
     
     history.append({"role": "user", "content": processed_input})
 
-    is_sufficient = False
-    next_best_task = None
+    extracted_info = session.get("extracted_info", {})
     turn_count = len(symptoms)
     
     if not is_first_turn:
-        is_sufficient, next_best_task = score_tasks_from_history(history, task_scores)
+        new_extracted = extract_patient_info(history)
+        if new_extracted:
+            for k, v in new_extracted.items():
+                if v: extracted_info[k] = v
         
-    # Tính threshold linh hoạt theo số lượt đã trôi qua
-    # Mỗi lượt giảm 0.08 điểm -> dễ thỏa mãn hơn. Vd: lượt 5 threshold chỉ còn ~0.45
-    dynamic_threshold = max(0.3, 0.85 - (turn_count * 0.08))
+        scores = calculate_scores_from_extracted_info(extracted_info)
+        for tid in task_scores:
+            if tid in scores:
+                task_scores[tid] = float(scores[tid])
+        
+    # Tính threshold linh hoạt theo số lượt đã trôi qua. Bắt đầu từ 0.7, giảm dần.
+    dynamic_threshold = max(0.2, 0.7 - (turn_count * 0.05))
     
-    # Hard stop: Nếu đã hỏi tới câu thứ 8 (coi như quá dài), ép buộc chốt luôn
-    if turn_count >= 8:
-        is_sufficient = True
-        dynamic_threshold = 0.0
-        
     # ─── STEP 4: CHECK ALL DONE ────────────────────
-    if not is_first_turn and (is_sufficient or all_done(task_scores, dynamic_threshold)):
-        # Brain 1: Tổng hợp hồ sơ
-        record_text = generate_record(history)
-        record_json = parse_record_to_json(record_text)
+    if not is_first_turn and all_done(task_scores, dynamic_threshold):
+        # Brain 1: Tổng hợp hồ sơ & Quyết định
+        final_report = generate_final_report(history)
         
-        # Brain 1: Quyết định đi khám
-        visit_decision = decide_visit(record_json, history)
-        decision = visit_decision.get("decision", "visit")
-        dept = visit_decision.get("department", record_json.get("khoa_de_nghi", {}).get("khoa_chinh", "Đa khoa"))
-        advice = visit_decision.get("advice", "")
-        reason = visit_decision.get("reason", "")
-        self_care_tips = visit_decision.get("self_care_tips", None)
+        statement = final_report.get("closingStatement", {})
+        advice = f"{statement.get('message', 'Dựa trên các triệu chứng bạn cung cấp, bạn nên được bác sĩ kiểm tra để loại trừ các rủi ro sức khỏe.')}\n\n{statement.get('disclaimer', '')}".strip()
         
-        if decision == "visit":
-            reply_msg = (
-                f"Đã thu thập đủ thông tin. Dựa trên các triệu chứng của bạn, "
-                f"tôi khuyến nghị bạn nên đi khám bác sĩ.\n\n"
-                f"📋 Lý do: {reason}\n"
-                f"🏥 Chuyên khoa đề xuất: {dept}\n\n"
-                f"Hệ thống sẽ giúp bạn tìm bệnh viện phù hợp gần nhất."
-            )
-            stage = "complete_visit"
-        else:
-            reply_msg = (
-                f"Đã thu thập đủ thông tin. Dựa trên các triệu chứng hiện tại, "
-                f"bạn có thể tự chăm sóc tại nhà.\n\n"
-                f"📋 Đánh giá: {reason}\n\n"
-                f"💡 Lời khuyên:\n{advice if advice else 'Nghỉ ngơi đầy đủ, uống nhiều nước, theo dõi triệu chứng.'}\n\n"
-                f"⚠️ Nếu triệu chứng nặng hơn, hãy đến gặp bác sĩ ngay."
-            )
-            stage = "complete_no_visit"
+        decision = "visit"
+        stage = "complete_visit"
+        reply_msg = advice
         
         history.append({"role": "assistant", "content": reply_msg})
         
@@ -623,13 +540,12 @@ def chat_with_agent1(request: ChatRequest):
             "conversation_history": history,
             "symptoms_accumulated": symptoms,
             "task_scores": task_scores,
+            "extracted_info": extracted_info,
             "is_first_turn": False,
             "status": "completed",
             "decision": decision,
-            "recommended_dept": dept if decision == "visit" else None,
-            "record": record_json,
-            "advice": advice if decision == "no_visit" else None,
-            "self_care_tips": self_care_tips if decision == "no_visit" else None
+            "record": final_report,
+            "advice": advice
         })
         
         return ChatResponse(
@@ -637,15 +553,13 @@ def chat_with_agent1(request: ChatRequest):
             emergency=False, 
             stage=stage,
             decision=decision,
-            advice=advice if decision == "no_visit" else None,
-            self_care_tips=self_care_tips if decision == "no_visit" else None,
-            record=record_json,
-            recommended_dept=dept if decision == "visit" else None,
+            advice=advice,
+            record=final_report,
             transcript=transcript
         )
 
     # ─── STEP 5: BRAIN 1 — GENERATE NEXT QUESTION ──
-    current_task_id, current_task_desc = get_next_task(task_scores, dynamic_threshold, preferred_task=next_best_task)
+    current_task_id, current_task_desc = get_next_task(task_scores, dynamic_threshold, preferred_task=None)
     
     # Xây danh sách câu hỏi đã hỏi để chống trùng lặp
     asked_topics = build_asked_topics(history)
@@ -658,12 +572,20 @@ def chat_with_agent1(request: ChatRequest):
         if asked_topics:
             anti_dup = f"\n\nCÁC CÂU HỎI ĐÃ HỎI (TUYỆT ĐỐI KHÔNG HỎI LẠI Ý TƯƠNG TỰ):\n{asked_topics}"
         
+        # Lấy thông tin đã biết để LLM không hỏi lại
+        known_info = "\n".join(f"- {k}: {v}" for k, v in extracted_info.items() if v)
+        if known_info:
+            known_info = f"\nTHÔNG TIN ĐÃ BIẾT (TUYỆT ĐỐI KHÔNG HỎI LẠI CÁC Ý NÀY):\n{known_info}\n"
+        
         instruction = (
             f"TRẠNG THÁI NHIỆM VỤ:\n"
             f"{task_status}\n\n"
-            f"Hỏi thêm về: '{current_task_desc}'. "
-            f"Chỉ hỏi ĐÚNG MỘT câu tự nhiên, ngắn gọn.\n"
-            f"TUYỆT ĐỐI KHÔNG hỏi lại thông tin bệnh nhân đã cung cấp."
+            f"{known_info}"
+            f"Nhiệm vụ: Hỏi thêm về '{current_task_desc}'.\n"
+            f"YÊU CẦU BẮT BUỘC:\n"
+            f"1. Chỉ hỏi ĐÚNG MỘT câu tự nhiên, ngắn gọn.\n"
+            f"2. KHÔNG hỏi lại những thông tin đã biết.\n"
+            f"3. KIỂM TRA KỸ DANH SÁCH ĐÃ HỎI. TUYỆT ĐỐI KHÔNG HỎI LẠI NHỮNG GÌ ĐÃ HỎI HOẶC TƯƠNG TỰ. Nếu đã hỏi rồi mà chưa có thông tin, bắt buộc phải hỏi sang khía cạnh khác của vấn đề."
             f"{anti_dup}"
         )
 
@@ -683,7 +605,8 @@ def chat_with_agent1(request: ChatRequest):
 
     messages_to_send = [{"role": "system", "content": f"{system_instruction}\n\n---\nDỮ LIỆU THÔNG TIN Y KHOA (RAG TỪ TÀI LIỆU): \n{context}\n---"}]
     for msg in history[:-1]:  # Exclude last user input since we inject it with instruction
-        messages_to_send.append({"role": msg["role"], "content": msg["content"]})
+        if not msg.get("is_off_topic", False):
+            messages_to_send.append({"role": msg["role"], "content": msg["content"]})
         
     messages_to_send.append({
         "role": "user",
@@ -706,6 +629,7 @@ def chat_with_agent1(request: ChatRequest):
         "conversation_history": history,
         "symptoms_accumulated": symptoms,
         "task_scores": task_scores,
+        "extracted_info": extracted_info,
         "is_first_turn": False
     })
     
