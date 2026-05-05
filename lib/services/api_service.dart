@@ -119,6 +119,7 @@ class ApiService {
             lat: json['lat'],
             lng: json['lng'],
             photoUrl: photoUrl,
+            placeId: json['place_id'],
           );
         }).toList();
       }
@@ -151,15 +152,21 @@ class ApiService {
     };
   }
 
-  Future<Map<String, dynamic>> updateDepartment(String sessionId, String department) async {
+  Future<Map<String, dynamic>> updateDepartment(
+    String sessionId,
+    String department, {
+    String? fromDepartment,
+  }) async {
     try {
+      final body = <String, dynamic>{
+        "session_id": sessionId,
+        "department": department,
+        if (fromDepartment != null) "from_department": fromDepartment,
+      };
       final response = await http.post(
         Uri.parse('$baseUrl/agent2/update-dept'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          "session_id": sessionId,
-          "department": department,
-        }),
+        body: jsonEncode(body),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
