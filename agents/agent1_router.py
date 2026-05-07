@@ -384,10 +384,14 @@ Nếu quyết định là "no_visit", hãy tạo self_care_tips chi tiết, cụ
 Ví dụ nếu bị ho: avoid gồm "Uống đồ lạnh và đá", "Ăn đồ chiên xào nhiều dầu mỡ"...
 TUYỆT ĐỐI KHÔNG đề cập thuốc trong bất kỳ trường nào.
 
+QUY TẮC TRƯỜNG "reason":
+- Nếu "visit": Viết lý do có cấu trúc mạch lạc, mang sức nặng chuyên môn, nêu cụ thể các triệu chứng và lý do cần đi khám. Ví dụ: "Tình trạng đau bụng nghiêm trọng kèm tiêu chảy kéo dài hơn 1 tuần có thể liên quan đến các vấn đề tiêu hóa cần được đánh giá thêm."
+- Nếu "no_visit": Viết lý do ngắn gọn.
+
 Trả về JSON duy nhất (không giải thích thêm):
 {{
   "decision": "visit hoặc no_visit",
-  "reason": "lý do ngắn gọn",
+  "reason": "lý do mang sức nặng chuyên môn và cụ thể (như quy tắc trên)",
   "department": "tên khoa nếu visit, rỗng nếu no_visit",
   "advice": "tóm tắt lời khuyên 1-2 câu nếu no_visit, rỗng nếu visit",
   "self_care_tips": {{
