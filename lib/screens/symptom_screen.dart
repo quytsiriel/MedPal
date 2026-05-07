@@ -374,7 +374,8 @@ class _SymptomScreenState extends ConsumerState<SymptomScreen> {
         _isCompleted = true;
         // Thong bao cho global provider de Agent 3 tu dong nhan du lieu
         if (_currentSessionId != null) {
-          ref.read(sessionProvider.notifier).markCompleted(_currentSessionId!);
+          final mode = stage == 'complete_visit' ? 'hospital' : 'home';
+          ref.read(sessionProvider.notifier).markCompleted(_currentSessionId!, careMode: mode);
         }
       }
     });

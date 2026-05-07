@@ -48,6 +48,10 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
   StateSetter? _modalSetState;
   final TextEditingController _deptController = TextEditingController();
   final TextEditingController _diagnosisController = TextEditingController();
+  final TextEditingController _conclusionController = TextEditingController();
+
+  // Conclusion phase state
+  bool _isSavingConclusion = false;
 
   void _updateMascotState(VoidCallback fn) {
     fn();
@@ -63,6 +67,7 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     _audioRecorder.dispose();
     _deptController.dispose();
     _diagnosisController.dispose();
+    _conclusionController.dispose();
     super.dispose();
   }
 
@@ -287,6 +292,62 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
     } catch (e) {
       _updateMascotState(() => _mascotReply = 'Lỗi lưu chẩn đoán: $e');
     }
+  }
+
+  void _initConclusionChat() {
+    _isSavingConclusion = false;
+    _conclusionController.clear();
+  }
+
+  Future<void> _submitConclusionChat() async {
+    final text = _conclusionController.text.trim();
+    if (text.isEmpty || _isSavingConclusion) return;
+    _conclusionController.clear();
+
+    _updateMascotState(() {
+      _isSavingConclusion = true;
+      _mascotReply = '⏳ Đang lưu kết luận bác sĩ...';
+    });
+
+    try {
+      final sessionId = ref.read(sessionProvider).lastSessionId;
+      if (sessionId == null) {
+        _updateMascotState(() {
+          _isSavingConclusion = false;
+          _mascotReply = '❌ Không tìm thấy phiên khám hiện tại.';
+        });
+        return;
+      }
+
+      // Save doctor's conclusion to Firebase via the combined endpoint.
+      // This also triggers MedGemma 4B in the background, caching
+      // the advice in Firebase for the prescriptions panel to pick up.
+      await apiService.submitDoctorConclusion(sessionId, text);
+
+      if (mounted) {
+        // Invalidate advice cache so prescription_screen re-fetches
+        // the newly generated health advice from Firebase.
+        ref.read(sessionProvider.notifier).invalidateAdvice();
+
+        // Navigate to prescriptions → Tab "Lời khuyên" which auto-fetches advice
+        _navigateToPrescriptions();
+      }
+    } catch (e) {
+      _updateMascotState(() {
+        _isSavingConclusion = false;
+        _mascotReply = '❌ Lỗi: $e';
+      });
+    }
+  }
+
+  void _navigateToPrescriptions() {
+    ref.read(navigationProvider.notifier).setArrived(false);
+    _updateMascotState(() {
+      _isPostExamPhase = false;
+      _mascotState = 0;
+    });
+    Navigator.pop(context);
+    context.go('/prescriptions');
   }
 
   @override
@@ -770,9 +831,11 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
                 child: TextButton.icon(
                   onPressed: () {
                     Navigator.pop(ctx);
+                    _initConclusionChat();
                     setState(() {
                       _isPostExamPhase = true;
-                      _mascotReply = "Bác sĩ có những chẩn đoán như thế nào?";
+                      _mascotState = 2;
+                      _mascotReply = "Nhập kết luận bác sĩ";
                     });
                   },
                   icon: const Icon(Icons.medical_services_rounded, size: 18, color: brand),
@@ -884,16 +947,17 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          // ── Skip to diagnosis ──
+          // ── Skip to diagnosis (now opens chat) ──
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24.0),
             child: SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
                 onPressed: () {
+                  _initConclusionChat();
                   _updateMascotState(() {
                     _mascotState = 2;
-                    _mascotReply = "Bác sĩ có những chẩn đoán như thế nào?";
+                    _mascotReply = "Nhập kết luận bác sĩ";
                   });
                 },
                 icon: const Icon(Icons.medical_services_rounded, color: brand),
@@ -909,58 +973,230 @@ class _NavigationScreenState extends ConsumerState<NavigationScreen> {
           ),
         ],
         if (_mascotState == 2) ...[
-          // ── Text input for diagnosis (tab-1 style) ──
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _diagnosisController,
-                    textCapitalization: TextCapitalization.sentences,
-                    maxLines: null,
-                    keyboardType: TextInputType.multiline,
-                    decoration: InputDecoration(
-                      hintText: 'Nhập chẩn đoán của bác sĩ...',
-                      filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                        borderSide: const BorderSide(color: Color(0xFFE5F1F1), width: 2),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                        borderSide: const BorderSide(color: Color(0xFFE5F1F1), width: 2),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                        borderSide: const BorderSide(color: brand, width: 2),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Container(
-                  decoration: const BoxDecoration(
-                    color: brand,
-                    shape: BoxShape.circle,
-                  ),
-                  child: IconButton(
-                    icon: const Icon(Icons.send_rounded, color: Colors.white),
-                    onPressed: _submitDiagnosisFromText,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // ── Doctor Conclusion Chat Interface ──
+          _buildConclusionChatUI(),
         ],
         const SizedBox(height: 32),
       ],
     );
   }
 
+  Widget _buildConclusionChatUI() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8.0),
+      child: Column(
+        children: [
+          // ── Header ──
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [brand, Color(0xFF00888E)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: const [
+                BoxShadow(color: Color(0x33006B70), blurRadius: 12, offset: Offset(0, 4)),
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.medical_services_rounded, color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Kết luận bác sĩ',
+                        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                      SizedBox(height: 2),
+                      Text('Nhập để MedGemma đưa ra lời khuyên',
+                        style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_awesome, color: Colors.amber, size: 14),
+                      SizedBox(width: 4),
+                      Text('MedGemma', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // ── Text Input Card ──
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFE5F1F1), width: 1.5),
+              boxShadow: const [
+                BoxShadow(color: Color(0x08000000), blurRadius: 8, offset: Offset(0, 2)),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Bác sĩ đã chẩn đoán gì cho bạn?',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF2C3E50)),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'VD: Viêm họng cấp, viêm amidan, thiếu máu nhẹ...',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF95A5A6)),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _conclusionController,
+                  textCapitalization: TextCapitalization.sentences,
+                  maxLines: 4,
+                  minLines: 2,
+                  enabled: !_isSavingConclusion,
+                  decoration: InputDecoration(
+                    hintText: 'Nhập kết luận của bác sĩ...',
+                    hintStyle: const TextStyle(color: Color(0xFFB0BEC5), fontSize: 14),
+                    filled: true,
+                    fillColor: const Color(0xFFF8FCFC),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: Color(0xFFE5F1F1)),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: Color(0xFFE5F1F1)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: const BorderSide(color: brand, width: 1.5),
+                    ),
+                    contentPadding: const EdgeInsets.all(14),
+                  ),
+                  onSubmitted: (_) => _submitConclusionChat(),
+                ),
+                const SizedBox(height: 14),
+                // ── Action buttons ──
+                Row(
+                  children: [
+                    // Mic button
+                    GestureDetector(
+                      onTap: _isSavingConclusion ? null : _toggleRecordingForConclusion,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: _isRecording ? Colors.red.withValues(alpha: 0.12) : const Color(0xFFF4FAFA),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: _isRecording ? Colors.red.withValues(alpha: 0.3) : const Color(0xFFE5F1F1),
+                          ),
+                        ),
+                        child: Icon(
+                          _isRecording ? Icons.stop_rounded : Icons.mic_rounded,
+                          color: _isRecording ? Colors.red : brand,
+                          size: 22,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    // Send button
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: _isSavingConclusion ? null : _submitConclusionChat,
+                        icon: _isSavingConclusion
+                          ? const SizedBox(
+                              width: 18, height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : const Icon(Icons.send_rounded, color: Colors.white, size: 18),
+                        label: Text(
+                          _isSavingConclusion ? 'Đang gửi...' : 'Gửi & nhận lời khuyên',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _isSavingConclusion ? Colors.grey.shade400 : brand,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          elevation: _isSavingConclusion ? 0 : 3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleRecordingForConclusion() async {
+    if (_isProcessingMic) return;
+    _isProcessingMic = true;
+    try {
+      if (_isRecording) {
+        await _stopRecordingForConclusion();
+      } else {
+        await _startRecording();
+      }
+    } finally {
+      _isProcessingMic = false;
+    }
+  }
+
+  Future<void> _stopRecordingForConclusion() async {
+    _recordTimer?.cancel();
+    final path = await _audioRecorder.stop();
+    _updateMascotState(() {
+      _isRecording = false;
+      _recordDuration = Duration.zero;
+      _mascotReply = 'Đang nhận dạng giọng nói...';
+    });
+
+    if (path == null) return;
+
+    try {
+      final bytes = await readRecordedAudio(path);
+      final base64Audio = base64Encode(bytes);
+      final response = await apiService.transcribe(base64Audio);
+      final transcript = response['transcript'] as String?;
+
+      if (transcript != null && transcript.isNotEmpty) {
+        _conclusionController.text = transcript;
+        _updateMascotState(() => _mascotReply = 'Nhập kết luận bác sĩ');
+      } else {
+        _updateMascotState(() => _mascotReply = 'Không nghe rõ, bạn có thể nói lại không?');
+      }
+    } catch (e) {
+      _updateMascotState(() => _mascotReply = 'Lỗi nhận dạng: $e');
+    }
+  }
+
   Widget _buildRobotMascot(BuildContext context) {
+
     // -------------------------------------------------------------
     // Tinh chỉnh kích thước và vị trí của trái tim tại đây:
     const double heartWidth = 350.0; // Chiều ngang của trái tim

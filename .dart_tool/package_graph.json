@@ -14,11 +14,13 @@
         "firebase_auth",
         "firebase_core",
         "flutter",
+        "flutter_polyline_points",
         "flutter_riverpod",
         "geolocator",
         "go_router",
         "google_fonts",
         "google_maps_flutter",
+        "google_maps_flutter_web",
         "http",
         "image_picker",
         "record",
@@ -53,6 +55,14 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "flutter_polyline_points",
+      "version": "3.1.0",
+      "dependencies": [
+        "flutter",
+        "http"
       ]
     },
     {
@@ -163,6 +173,20 @@
         "pedantic",
         "speech_to_text_platform_interface",
         "speech_to_text_windows",
+        "web"
+      ]
+    },
+    {
+      "name": "google_maps_flutter_web",
+      "version": "0.6.2+1",
+      "dependencies": [
+        "collection",
+        "flutter",
+        "flutter_web_plugins",
+        "google_maps",
+        "google_maps_flutter_platform_interface",
+        "sanitize_html",
+        "stream_transform",
         "web"
       ]
     },
@@ -705,17 +729,16 @@
       ]
     },
     {
-      "name": "google_maps_flutter_web",
-      "version": "0.6.2",
+      "name": "stream_transform",
+      "version": "2.1.1",
+      "dependencies": []
+    },
+    {
+      "name": "sanitize_html",
+      "version": "2.1.0",
       "dependencies": [
-        "collection",
-        "flutter",
-        "flutter_web_plugins",
-        "google_maps",
-        "google_maps_flutter_platform_interface",
-        "sanitize_html",
-        "stream_transform",
-        "web"
+        "html",
+        "meta"
       ]
     },
     {
@@ -726,6 +749,14 @@
         "flutter",
         "plugin_platform_interface",
         "stream_transform"
+      ]
+    },
+    {
+      "name": "google_maps",
+      "version": "8.2.0",
+      "dependencies": [
+        "meta",
+        "web"
       ]
     },
     {
@@ -989,11 +1020,6 @@
       ]
     },
     {
-      "name": "stream_transform",
-      "version": "2.1.1",
-      "dependencies": []
-    },
-    {
       "name": "cross_file",
       "version": "0.3.5+2",
       "dependencies": [
@@ -1091,19 +1117,11 @@
       "dependencies": []
     },
     {
-      "name": "sanitize_html",
-      "version": "2.1.0",
+      "name": "html",
+      "version": "0.15.6",
       "dependencies": [
-        "html",
-        "meta"
-      ]
-    },
-    {
-      "name": "google_maps",
-      "version": "8.2.0",
-      "dependencies": [
-        "meta",
-        "web"
+        "csslib",
+        "source_span"
       ]
     },
     {
@@ -1236,10 +1254,9 @@
       "dependencies": []
     },
     {
-      "name": "html",
-      "version": "0.15.6",
+      "name": "csslib",
+      "version": "1.0.2",
       "dependencies": [
-        "csslib",
         "source_span"
       ]
     },
@@ -1454,13 +1471,6 @@
       "dependencies": [
         "collection",
         "meta"
-      ]
-    },
-    {
-      "name": "csslib",
-      "version": "1.0.2",
-      "dependencies": [
-        "source_span"
       ]
     },
     {

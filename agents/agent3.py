@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import os
 import json
+import re
 from openai import OpenAI
 
 router = APIRouter(prefix="/agent3", tags=["Agent 3"])
@@ -102,15 +103,21 @@ def scan_prescription(request: PrescriptionRequest):
 class HealthAdviceRequest(BaseModel):
     session_id: str
 
-HEALTH_ADVICE_PROMPT = """Benh nhan co trieu chung va thong tin tu bac si: {symptoms}
+HEALTH_ADVICE_PROMPT = """Thong tin benh nhan (trieu chung va/hoac ket luan bac si): {symptoms}
 
-Hay phan tich cac trieu chung va chan doan tren, ket hop voi kien thuc y khoa cua ban (MedGemma) de dua ra 6 loi khuyen cham soc suc khoe tai nha dang JSON. CHI tra ve JSON, KHONG giai thich them:
-{{"diagnosis_summary":"Tom tat 1 cau","tips":[{{"category":"avoid","title":"..","description":".."}},{{"category":"avoid","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"warning","title":"..","description":".."}}]}}
+Hay phan tich cac thong tin tren (uu tien KET LUAN BAC SI neu co), ket hop voi kien thuc y khoa cua ban (MedGemma) de dua ra 6 loi khuyen cham soc suc khoe tai nha dang JSON. CHI tra ve JSON, KHONG giai thich them:
+{{"diagnosis_summary":"Tom tat 1 cau","tips":[{{"category":"avoid","title":"..","description":".."}},{{"category":"avoid","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"warning","title":"..","description":".."}}]}}
 
 Quy tac: 2 muc avoid (nen tranh), 3 muc do (nen lam), 1 muc warning. KHONG ke thuoc. Tieng Viet co dau."""
 
 def _extract_patient_summary(session_data: dict) -> str:
     parts = []
+    
+    # Prioritize doctor's conclusion if available (hospital visit mode)
+    doctor_diagnosis = session_data.get("doctor_diagnosis")
+    if doctor_diagnosis:
+        parts.append(f"KET LUAN BAC SI: {doctor_diagnosis}")
+    
     record = session_data.get("record", {})
     
     # Format 1 (new)
@@ -148,11 +155,6 @@ def _extract_patient_summary(session_data: dict) -> str:
         if p_clean and p_clean.lower() not in seen:
             seen.add(p_clean.lower())
             unique.append(p_clean)
-            
-    # Include doctor's diagnosis if available
-    doctor_diagnosis = session_data.get("doctor_diagnosis")
-    if doctor_diagnosis:
-        unique.append(f"Chan doan cua bac si: {doctor_diagnosis}")
             
     return ", ".join(unique[:10])
 
@@ -221,6 +223,8 @@ def get_health_advice(request: HealthAdviceRequest):
         elif "```" in raw_text:
             raw_text = raw_text.split("```")[1].split("```")[0].strip()
             
+        # Fix trailing commas that MedGemma often produces
+        raw_text = re.sub(r',\s*([}\]])', r'\1', raw_text)
         data = json.loads(raw_text)
         
         # Cập nhật Firebase
@@ -233,3 +237,48 @@ def get_health_advice(request: HealthAdviceRequest):
     except Exception as e:
         print(f"MedGemma Error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"MedGemma timeout hoac loi: {str(e)}")
+
+
+# ── DOCTOR CONCLUSION CHAT ─────────────────────────
+
+class DoctorConclusionRequest(BaseModel):
+    session_id: str
+    conclusion: str
+
+CONCLUSION_ADVICE_PROMPT = """Bac si vua kham va dua ra ket luan cho benh nhan nhu sau:
+
+"{conclusion}"
+
+Thong tin trieu chung truoc do cua benh nhan: {symptoms}
+
+Hay phan tich ket luan cua bac si va ket hop voi kien thuc y khoa cua ban (MedGemma) de dua ra 6 loi khuyen cham soc suc khoe tai nha. CHI tra ve JSON, KHONG giai thich them:
+{{"diagnosis_summary":"Tom tat chan doan cua bac si bang 1-2 cau","tips":[{{"category":"avoid","title":"..","description":".."}},{{"category":"avoid","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"do","title":"..","description":".."}},{{"category":"warning","title":"..","description":".."}}]}}
+
+Quy tac: 2 muc avoid (nen tranh), 3 muc do (nen lam), 1 muc warning. KHONG ke thuoc. Tieng Viet co dau."""
+
+@router.post("/doctor-conclusion-chat")
+def doctor_conclusion_chat(request: DoctorConclusionRequest):
+    """
+    Save doctor's conclusion to Firebase and invalidate cached advice.
+    The actual advice generation happens when the client calls /health-advice,
+    which detects doctor_diagnosis and includes it in the MedGemma prompt.
+    """
+    db = get_db()
+    doc_ref = db.collection("sessions").document(request.session_id)
+    doc = doc_ref.get()
+    
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Khong tim thay session")
+    
+    # Save doctor's conclusion and invalidate any cached advice
+    doc_ref.set({
+        "doctor_diagnosis": request.conclusion,
+        "health_advice": None  # Force /health-advice to re-generate with doctor's conclusion
+    }, merge=True)
+    print(f"[Agent 3] Saved doctor conclusion: {request.conclusion[:100]}...")
+    
+    return {
+        "status": "success",
+        "message": "Da luu ket luan bac si. Loi khuyen se duoc tao tu dong."
+    }
+

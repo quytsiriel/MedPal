@@ -243,8 +243,7 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
       return;
     }
 
-    // Don't re-fetch if already got advice for this session
-    if (_lastFetchedSessionId == sessionId && _healthTips.isNotEmpty) return;
+    // Guard is now in _buildHealthAdviceTab via fetchKey
 
     setState(() {
       _isAdviceLoading = true;
@@ -259,7 +258,6 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
       if (mounted) {
         setState(() {
           _isAdviceLoading = false;
-          _lastFetchedSessionId = sessionId;
           _diagnosisSummary = result['diagnosis_summary'] ?? '';
           if (result['tips'] != null) {
             _healthTips = (result['tips'] as List)
@@ -407,17 +405,48 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
     final sessionState = ref.watch(sessionProvider);
     final hasSession = sessionState.lastSessionId != null;
     final isCompleted = sessionState.isCompleted;
+    final careMode = sessionState.careMode; // 'home' or 'hospital'
 
-    // Auto-fetch when session is completed and we haven't fetched for this session yet
-    if (isCompleted &&
+    // Build a key that includes refreshToken so we re-fetch when advice is invalidated
+    final fetchKey = '${sessionState.lastSessionId}_${sessionState.refreshToken}';
+
+    // Auto-fetch logic based on care mode:
+    // - 'home' mode: fetch immediately when session completes (advice from symptoms)
+    // - 'hospital' mode: only fetch after doctor conclusion (when invalidateAdvice is called, refreshToken > 0)
+    final shouldAutoFetch = isCompleted &&
         hasSession &&
-        _lastFetchedSessionId != sessionState.lastSessionId &&
-        !_isAdviceLoading) {
+        _lastFetchedSessionId != fetchKey &&
+        !_isAdviceLoading &&
+        (careMode == 'home' || (careMode == 'hospital' && sessionState.refreshToken > 0));
+
+    if (shouldAutoFetch) {
       // Schedule fetch after build
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        _lastFetchedSessionId = fetchKey;
         _fetchHealthAdvice(sessionState.lastSessionId);
       });
     }
+
+    // Determine header text based on care mode
+    String headerText;
+    if (!hasSession) {
+      headerText = 'Hãy khám bệnh với AI trước để nhận lời khuyên chăm sóc sức khỏe cá nhân hóa.';
+    } else if (!isCompleted) {
+      headerText = 'Đang trong phiên khám. Hoàn thành khám bệnh để nhận lời khuyên.';
+    } else if (careMode == 'hospital') {
+      if (_healthTips.isNotEmpty || _isAdviceLoading) {
+        headerText = 'Lời khuyên dựa trên kết luận của bác sĩ sau khám.';
+      } else {
+        headerText = 'Hoàn thành khám bệnh và nhập kết luận bác sĩ để nhận lời khuyên.';
+      }
+    } else {
+      headerText = 'Lời khuyên chăm sóc tại nhà dựa trên triệu chứng của bạn.';
+    }
+
+    // Source label
+    final String sourceLabel = careMode == 'hospital'
+        ? '📋 Nguồn: Kết luận bác sĩ'
+        : '🩺 Nguồn: Triệu chứng người dùng';
 
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
@@ -470,11 +499,7 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    hasSession
-                        ? (isCompleted
-                              ? 'Phiên khám đã hoàn tất. Lời khuyên sức khỏe đang được tạo tự động.'
-                              : 'Đang trong phiên khám. Hoàn thành khám bệnh để nhận lời khuyên.')
-                        : 'Hãy khám bệnh với AI trước để nhận lời khuyên chăm sóc sức khỏe cá nhân hóa.',
+                    headerText,
                     style: GoogleFonts.lexend(
                       color: Colors.white70,
                       fontSize: 13,
@@ -515,6 +540,27 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                       ],
                     ),
                   ),
+                  // Source indicator
+                  if (isCompleted && careMode != null) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        sourceLabel,
+                        style: GoogleFonts.lexend(
+                          color: Colors.white60,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
                   // Manual refresh button if already have data
                   if (isCompleted && _healthTips.isNotEmpty) ...[
                     const SizedBox(height: 12),
@@ -567,7 +613,7 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                     const CircularProgressIndicator(color: Color(0xFF006A71)),
                     const SizedBox(height: 16),
                     Text(
-                      'MedGemma dang phan tich du lieu benh ly...',
+                      'MedGemma đang phân tích dữ liệu bệnh lý...',
                       style: GoogleFonts.lexend(
                         fontSize: 14,
                         color: Colors.grey.shade600,
@@ -575,7 +621,7 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Qua trinh nay co the mat 30-60 giay',
+                      'Quá trình này có thể mất 30-60 giây',
                       style: GoogleFonts.lexend(
                         fontSize: 12,
                         color: Colors.grey.shade400,
@@ -697,59 +743,71 @@ class _PrescriptionScreenState extends ConsumerState<PrescriptionScreen>
               ),
             ],
 
-            // Empty state
+            // Empty state — different based on careMode
             if (_healthTips.isEmpty &&
                 !_isAdviceLoading &&
                 _adviceError == null &&
                 _diagnosisSummary.isEmpty)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 60),
-                child: Column(
-                  children: [
-                    Icon(
-                      hasSession
-                          ? Icons.hourglass_empty_rounded
-                          : Icons.health_and_safety_outlined,
-                      size: 64,
-                      color: Colors.grey.shade300,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      hasSession
-                          ? (isCompleted
-                                ? 'Dang chuan bi loi khuyen...'
-                                : 'Dang trong phien kham')
-                          : 'Chua co loi khuyen nao',
-                      style: GoogleFonts.lexend(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 40),
-                      child: Text(
-                        hasSession
-                            ? (isCompleted
-                                  ? 'Loi khuyen se duoc tu dong tao sau khi hoan thanh phien kham.'
-                                  : 'Hoan thanh phien kham voi AI Agent 1 de nhan loi khuyen tu dong.')
-                            : 'Hay bat dau kham benh voi AI o tab "Kham benh" de nhan loi khuyen suc khoe ca nhan hoa.',
-                        textAlign: TextAlign.center,
-                        style: GoogleFonts.lexend(
-                          fontSize: 13,
-                          color: Colors.grey.shade400,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _buildEmptyAdviceState(hasSession, isCompleted, careMode),
 
             const SizedBox(height: 40),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyAdviceState(bool hasSession, bool isCompleted, String? careMode) {
+    IconData icon;
+    String title;
+    String subtitle;
+
+    if (!hasSession) {
+      icon = Icons.health_and_safety_outlined;
+      title = 'Chưa có lời khuyên nào';
+      subtitle = 'Hãy bắt đầu khám bệnh với AI ở tab "Khám bệnh" để nhận lời khuyên sức khỏe cá nhân hóa.';
+    } else if (!isCompleted) {
+      icon = Icons.hourglass_empty_rounded;
+      title = 'Đang trong phiên khám';
+      subtitle = 'Hoàn thành phiên khám với AI Agent 1 để nhận lời khuyên tự động.';
+    } else if (careMode == 'hospital') {
+      icon = Icons.local_hospital_rounded;
+      title = 'Chờ kết luận bác sĩ';
+      subtitle = 'Sau khi khám xong, hãy nhập kết luận của bác sĩ tại màn hình điều hướng để nhận lời khuyên từ MedGemma.';
+    } else {
+      icon = Icons.hourglass_empty_rounded;
+      title = 'Đang chuẩn bị lời khuyên...';
+      subtitle = 'Lời khuyên sẽ được tự động tạo sau khi hoàn thành phiên khám.';
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 60),
+      child: Column(
+        children: [
+          Icon(icon, size: 64, color: Colors.grey.shade300),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            style: GoogleFonts.lexend(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.lexend(
+                fontSize: 13,
+                color: Colors.grey.shade400,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

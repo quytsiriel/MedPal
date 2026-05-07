@@ -156,7 +156,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           _showHospitalRecommendations = true;
           // Thong bao cho global provider de Agent 3 tu dong nhan du lieu
           if (_currentSessionId != null) {
-            ref.read(sessionProvider.notifier).markCompleted(_currentSessionId!);
+            final mode = response['stage'] == 'complete_visit' ? 'hospital' : 'home';
+            ref.read(sessionProvider.notifier).markCompleted(_currentSessionId!, careMode: mode);
           }
         }
       });
@@ -574,32 +575,161 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  void _showUserProfileDialog() {
+    final nameController = TextEditingController();
+    final ageController = TextEditingController();
+    String gender = 'Nam';
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Text('Thông tin người dùng'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Tên'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: ageController,
+                    decoration: const InputDecoration(labelText: 'Tuổi'),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: gender,
+                    decoration: const InputDecoration(labelText: 'Giới tính'),
+                    items: ['Nam', 'Nữ', 'Khác'].map((String value) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value),
+                      );
+                    }).toList(),
+                    onChanged: (newValue) {
+                      setState(() {
+                        gender = newValue!;
+                      });
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Hủy'),
+                ),
+                ElevatedButton(
+                  onPressed: isLoading
+                      ? null
+                      : () async {
+                          setState(() => isLoading = true);
+                          try {
+                            await apiService.saveUserProfile(
+                              name: nameController.text,
+                              age: ageController.text,
+                              gender: gender,
+                            );
+                            if (mounted) {
+                              Navigator.of(context).pop();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Đã lưu thông tin')),
+                              );
+                            }
+                          } catch (e) {
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Lỗi: $e')),
+                              );
+                            }
+                          } finally {
+                            if (mounted) {
+                              setState(() => isLoading = false);
+                            }
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF006A71),
+                    foregroundColor: Colors.white,
+                  ),
+                  child: isLoading
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text('Lưu'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF4FAFA),
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              const SizedBox(height: 16),
-              _buildSpeechBubble(context),
-              const SizedBox(height: 16),
-              _buildRobotMascot(context),
-              const SizedBox(height: 16),
-              Text(
-                _isRecording ? 'Nhấn lại trái tim để gửi' : 'Nhấn vào trái tim để bắt đầu nói',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: _isRecording ? Colors.red : const Color(0xFF6B7B80),
-                  fontWeight: FontWeight.w600,
+        child: Stack(
+          children: [
+            SingleChildScrollView(
+              child: Column(
+                children: [
+                  const SizedBox(height: 16),
+                  _buildSpeechBubble(context),
+                  const SizedBox(height: 16),
+                  _buildRobotMascot(context),
+                  const SizedBox(height: 16),
+                  Text(
+                    _isRecording ? 'Nhấn lại trái tim để gửi' : 'Nhấn vào trái tim để bắt đầu nói',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: _isRecording ? Colors.red : const Color(0xFF6B7B80),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 48),
+                  _buildManualInput(context),
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ),
+            // User Profile Icon (Tiny)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: InkWell(
+                onTap: _showUserProfileDialog,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Image.asset(
+                    'assets/5045770.png',
+                    width: 24, // Siêu bé
+                    height: 24,
+                  ),
                 ),
               ),
-              const SizedBox(height: 48),
-              _buildManualInput(context),
-              const SizedBox(height: 32),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

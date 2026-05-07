@@ -73,6 +73,28 @@ class ApiService {
     throw Exception('Chat failed (${response.statusCode}): $detail');
   }
 
+  /// [POST] /agent1/save-user-profile
+  /// Lưu thông tin cơ bản của người dùng (Tên, Tuổi, Giới tính)
+  Future<void> saveUserProfile({
+    required String name,
+    required String age,
+    required String gender,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/agent1/save-user-profile'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        "name": name,
+        "age": age,
+        "gender": gender,
+      }),
+    ).timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to save user profile: ${response.statusCode}');
+    }
+  }
+
   /// [POST] /agent1/transcribe
   /// Chỉ nhận diện giọng nói (không cần session ID). Dùng cho transcription-only cases.
   Future<Map<String, dynamic>> transcribe(String voiceBase64) async {
@@ -174,11 +196,13 @@ class ApiService {
         "department": department,
         if (fromDepartment != null) "from_department": fromDepartment,
       };
-      final response = await http.post(
-        Uri.parse('$baseUrl/agent2/update-dept'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            Uri.parse('$baseUrl/agent2/update-dept'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         return jsonDecode(utf8.decode(response.bodyBytes));
@@ -267,7 +291,7 @@ class ApiService {
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({"session_id": sessionId}),
         )
-        .timeout(const Duration(seconds: 60));
+        .timeout(const Duration(seconds: 180));
 
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
@@ -286,20 +310,55 @@ class ApiService {
   /// [POST] /agent3/save-diagnosis
   /// Luu ket qua chan doan cua bac si do user doc vao
   Future<void> saveDiagnosis(String sessionId, String diagnosis) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/agent3/save-diagnosis'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        "session_id": sessionId,
-        "diagnosis": diagnosis,
-      }),
-    ).timeout(const Duration(seconds: 15));
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/agent3/save-diagnosis'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({"session_id": sessionId, "diagnosis": diagnosis}),
+        )
+        .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
-      throw Exception('Failed to save diagnosis (${response.statusCode}): ${response.body}');
+      throw Exception(
+        'Failed to save diagnosis (${response.statusCode}): ${response.body}',
+      );
     }
   }
+
+  /// [POST] /agent3/doctor-conclusion-chat
+  /// Lưu kết luận bác sĩ vào Firebase. Advice sẽ được tạo bởi /health-advice.
+  Future<Map<String, dynamic>> submitDoctorConclusion(
+    String sessionId,
+    String conclusion,
+  ) async {
+    final response = await http
+        .post(
+          Uri.parse('$baseUrl/agent3/doctor-conclusion-chat'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            "session_id": sessionId,
+            "conclusion": conclusion,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      return jsonDecode(utf8.decode(response.bodyBytes));
+    }
+
+    String detail = '';
+    try {
+      final errorBody = jsonDecode(utf8.decode(response.bodyBytes));
+      detail = errorBody['detail'] ?? response.body;
+    } catch (_) {
+      detail = response.body;
+    }
+    throw Exception(
+      'Doctor conclusion failed (${response.statusCode}): $detail',
+    );
+  }
 }
+
 
 // Global instance
 final apiService = ApiService();

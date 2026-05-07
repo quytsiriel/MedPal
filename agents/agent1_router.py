@@ -735,6 +735,35 @@ def transcribe_only(request: ChatRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+from pydantic import BaseModel
+
+class UserProfileRequest(BaseModel):
+    name: str
+    age: str
+    gender: str
+
+@router.post("/save-user-profile")
+def save_user_profile(request: UserProfileRequest):
+    """Lưu thông tin người dùng cơ bản vào Firestore."""
+    try:
+        db = get_db()
+        if not db:
+            raise Exception("Firestore not initialized")
+            
+        # Using a fixed document ID for this demo since there's no auth
+        # In a real app, this would be tied to user_id from token
+        db.collection("users").document("current_user").set({
+            "name": request.name,
+            "age": request.age,
+            "gender": request.gender,
+            "updated_at": datetime.now(timezone.utc)
+        }, merge=True)
+        
+        return {"status": "success", "message": "Đã lưu thông tin người dùng"}
+    except Exception as e:
+        print(f"[Agent 1] Save user profile error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     print("✅ Module agents.agent1_router loaded successfully!")
     print("💡 To run the API server, please use the command: python -m uvicorn main:app --reload")
